@@ -1,0 +1,24 @@
+{
+  "checked_at": "2026-10-06T16:14:57+00:00",
+  "baseline": {
+    "available": true,
+    "reproduced": true,
+    "exit_code": 1
+  },
+  "candidate": {
+    "available": true,
+    "reproduced": true,
+    "exit_code": 0
+  },
+  "integrity": {
+    "ok": true,
+    "checked": [
+      "fixtures/incidents/baseline.py",
+      "fixtures/incidents/check.py",
+      "fixtures/incidents/domain.md",
+      "fixtures/incidents/events.json",
+      "fixtures/incidents/reference-cases.json"
+    ],
+    "mismatches": []
+  }
+}
