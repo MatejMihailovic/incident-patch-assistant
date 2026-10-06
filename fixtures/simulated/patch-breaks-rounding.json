@@ -1,0 +1,17 @@
+{
+  "provenance": {
+    "source": "simulated",
+    "description": "The patch applies and fixes zero quantity but replaces half-up rounding with floor division. Expected outcome: failed, regression on the 'rounding' reference case.",
+    "note": "Handwritten negative-control fixture. NOT a model output."
+  },
+  "response": {
+    "model": "simulated",
+    "stop_reason": "end_turn",
+    "content": [
+      {
+        "type": "text",
+        "text": "{\n  \"relevant_event_ids\": [\n    \"EV1\",\n    \"EV2\",\n    \"EV4\"\n  ],\n  \"excluded_events\": [\n    {\n      \"event_id\": \"EV3\",\n      \"reason\": \"Expected ValueError for a negative total; a different failure.\"\n    }\n  ],\n  \"observed_failure\": \"unit_price raised ZeroDivisionError at baseline.py:4 for quantity 0 (EV1, EV2, EV4).\",\n  \"source_location\": {\n    \"file\": \"baseline.py\",\n    \"line\": 4\n  },\n  \"inferred_cause\": \"The division by 2 * quantity is evaluated when quantity is 0.\",\n  \"confidence\": \"high\",\n  \"untested_risks\": [],\n  \"patch\": {\n    \"file\": \"baseline.py\",\n    \"edits\": [\n      {\n        \"find\": \"    return (2 * total_cents + quantity) // (2 * quantity)\",\n        \"replace\": \"    if quantity == 0:\\n        return 0\\n    return total_cents // quantity\"\n      }\n    ]\n  },\n  \"patch_rationale\": \"Simulated: a plausible-looking simplification that silently drops the rounding rule.\"\n}"
+      }
+    ]
+  }
+}
