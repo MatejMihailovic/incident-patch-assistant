@@ -1,0 +1,22 @@
+{
+  "command": "python3 check.py ../../runs/20261006T171201Z-ev1-replay/candidate.py --case zero-quantity",
+  "case": "zero-quantity",
+  "exit_code": 0,
+  "timed_out": false,
+  "duration_s": 0.025,
+  "stdout": "[\n  {\n    \"id\": \"zero-quantity\",\n    \"args\": [\n      0,\n      0\n    ],\n    \"expected\": 0,\n    \"actual\": 0,\n    \"passed\": true\n  }\n]\n",
+  "stderr": "",
+  "results": [
+    {
+      "id": "zero-quantity",
+      "args": [
+        0,
+        0
+      ],
+      "expected": 0,
+      "actual": 0,
+      "passed": true
+    }
+  ],
+  "load_error": null
+}

@@ -175,13 +175,20 @@ def execute(event_id, response_file=None, model_name=None, effort=None, runs_dir
     run.save_json("evidence/files.json", {name: {"sha256": integrity.sha256(config.REPO_DIR / name), "text": text}
                                           for name, text in files.items()})
 
-    # 3. Baseline checks, before any model call. Cases that fail here are the regression targets.
+    # 3. Baseline checks, before any model call. Cases that fail here with the incident's error are the
+    #    regression targets; without one, a patch for this incident could not be verified.
     baseline_full = checks.run_check(module_path)
     run.save_json("checks/baseline-full.json", baseline_full)
     if baseline_full["results"] is None:
         return run.finish("failed", "The fixed check could not evaluate the baseline module.")
-    targets = checks.failing_ids(baseline_full)
+    baseline_failing = checks.failing_ids(baseline_full)
+    targets = [r["id"] for r in baseline_full["results"] if not r["passed"] and r.get("error") == incident.error]
     run.meta["target_cases"] = targets
+    run.meta["baseline_failing_cases"] = baseline_failing
+    if not targets:
+        return run.finish("failed", f"No reference case reproduces {incident.error} on the baseline, so a patch for "
+                                    f"{incident.id} could not be verified; the model was not called. "
+                                    "(Check whether the event records expected behaviour.)")
     for case_id in targets:
         run.save_json(f"checks/baseline-case-{case_id}.json", checks.run_check(module_path, case_id))
 
@@ -243,11 +250,14 @@ def execute(event_id, response_file=None, model_name=None, effort=None, runs_dir
     else:
         candidate_failing = checks.failing_ids(candidate_full)
         still = [c for c in targets if c in candidate_failing]
-        regressed = [c for c in candidate_failing if c not in targets]
+        regressed = [c for c in candidate_failing if c not in baseline_failing]
+        unrelated = [c for c in candidate_failing if c in baseline_failing and c not in targets]
         if still:
             reasons.append(f"Previously failing case(s) still fail: {', '.join(still)}.")
         if regressed:
             reasons.append(f"Regression: case(s) that passed on the baseline now fail: {', '.join(regressed)}.")
+        if unrelated:
+            reasons.append(f"Case(s) unrelated to this incident still fail, so the full set does not pass: {', '.join(unrelated)}.")
     if candidate_full["timed_out"]:
         reasons.append("The candidate check timed out.")
     if reasons:

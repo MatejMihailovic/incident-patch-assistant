@@ -1,0 +1,134 @@
+<!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'><title>Incident review 20261006T171202Z-ev1-sim-patch-does-not-apply</title><style>
+:root{--bg:#fbfbfa;--fg:#1d1d1b;--muted:#6b6b66;--card:#fff;--line:#e3e2dd;--ok:#1f7a3a;--okbg:#e6f4ea;
+--bad:#b3261e;--badbg:#fbe9e7;--warn:#8a5a00;--warnbg:#fff4d6;--info:#2453a6;--infobg:#e8effb;--code:#f4f3ef;--hl:#fff1b8}
+@media (prefers-color-scheme:dark){:root{--bg:#161615;--fg:#e9e8e3;--muted:#a09f99;--card:#1f1f1d;--line:#34332f;
+--ok:#7fd49a;--okbg:#17321f;--bad:#ff9b8f;--badbg:#3a1714;--warn:#f0c062;--warnbg:#3a2c0d;--info:#9dbcf5;--infobg:#172440;--code:#262623;--hl:#4a3f12}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,-apple-system,Segoe UI,sans-serif}
+main{max-width:1080px;margin:0 auto;padding:24px 16px 64px}h1{font-size:22px;margin:0 0 4px}h2{font-size:17px;margin:32px 0 10px}
+.muted{color:var(--muted)}.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin:10px 0}
+.badge{display:inline-block;padding:2px 10px;border-radius:999px;font-size:13px;font-weight:600;margin-right:6px}
+.ok{color:var(--ok);background:var(--okbg)}.bad{color:var(--bad);background:var(--badbg)}.warn{color:var(--warn);background:var(--warnbg)}
+.info{color:var(--info);background:var(--infobg)}table{border-collapse:collapse;width:100%;font-size:14px}
+th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top}th{color:var(--muted);font-weight:600}
+.scroll{overflow-x:auto}pre,code{font:13px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+pre{background:var(--code);padding:10px 12px;border-radius:8px;overflow-x:auto;margin:6px 0}
+.src span{display:block}.src .hl{background:var(--hl)}.add{color:var(--ok)}.del{color:var(--bad)}.hunk{color:var(--info)}
+details{margin:6px 0}summary{cursor:pointer;color:var(--muted)}ul{margin:6px 0;padding-left:20px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px}
+.label{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+</style></head><body><main>
+<h1>Incident review: INC-EV1</h1>
+<div class=muted>Run <code>20261006T171202Z-ev1-sim-patch-does-not-apply</code> · 2026-10-06T17:12:02+00:00</div>
+<div class=card><span class="badge bad">FAILED</span> <span class="badge warn">SIMULATED response (negative control)</span><span class="muted">The find text does not exist in baseline.py, so the patch cannot apply. Expected outcome: failed, baseline unchanged, no candidate tested.</span><ul><li>The proposed patch was rejected; the baseline is unchanged.</li></ul></div>
+<div class=grid>
+<div class=card><div class=label>Failing case(s) on baseline</div><div><b>zero-quantity</b></div></div>
+<div class=card><div class=label>Failing case(s) after patch</div><div><b>—</b></div></div>
+<div class=card><div class=label>Reference cases: baseline → candidate</div><div><b>4/5 → —</b></div></div>
+<div class=card><div class=label>Frozen fixtures unchanged</div><div><b>yes</b></div></div>
+</div>
+<h2>Incident and evidence</h2>
+<p>Selected event <b>EV1</b> belongs to incident <b>INC-EV1</b>: <code>unit_price</code> raised <code>ZeroDivisionError</code> at <code>baseline.py:4</code>. Events are grouped by code on (function, error, source), independently of the model.</p>
+<div class=scroll><table><tr><th>Event</th><th>Input</th><th>Error</th><th>Source</th><th>Code grouping</th><th>Model</th><th>Note / file</th></tr><tr><td><b>EV1</b></td><td><code>{&quot;total_cents&quot;: 0, &quot;quantity&quot;: 0}</code></td><td>ZeroDivisionError</td><td><code>baseline.py:4</code></td><td><span class="badge info">same failure</span></td><td>cited as evidence </td><td class=muted><br>fixtures/incidents/events.json</td></tr><tr><td><b>EV2</b></td><td><code>{&quot;total_cents&quot;: 0, &quot;quantity&quot;: 0}</code></td><td>ZeroDivisionError</td><td><code>baseline.py:4</code></td><td><span class="badge info">same failure</span></td><td>cited as evidence </td><td class=muted><br>fixtures/incidents/events.json</td></tr><tr><td><b>EV3</b></td><td><code>{&quot;total_cents&quot;: -1, &quot;quantity&quot;: 1}</code></td><td>ValueError</td><td><code>baseline.py:3</code></td><td><span class="badge warn">different failure</span></td><td>excluded: Expected ValueError for a negative total; a different failure. </td><td class=muted>Expected rejection of an invalid input; unrelated to EV1.<br>fixtures/incidents/events.json</td></tr><tr><td><b>EV4</b></td><td><code>{&quot;total_cents&quot;: 1500, &quot;quantity&quot;: 0}</code></td><td>ZeroDivisionError</td><td><code>baseline.py:4</code></td><td><span class="badge info">same failure</span></td><td>cited as evidence </td><td class=muted>Addition: same defect as EV1 with a nonzero total and a traceback-style payload.<br>fixtures/additions/extra-events.json</td></tr></table></div>
+<div class=card><b>Malformed events (reported, not used):</b><ul><li><code>EV5</code> in fixtures/additions/extra-events.json: missing or invalid &#x27;error&#x27;; missing or invalid &#x27;source&#x27;</li></ul></div>
+<h2>Cited source: baseline.py</h2>
+<div class=muted>Highlighted: line 4 (from events), line 4 (cited by model)</div>
+<pre class="src"><span>  1  def unit_price(total_cents, quantity):</span><span>  2      if total_cents &lt; 0 or quantity &lt; 0:</span><span>  3          raise ValueError(&quot;Amounts and quantities must be nonnegative&quot;)</span><span class="hl">  4      return (2 * total_cents + quantity) // (2 * quantity)</span></pre>
+<h2>Diagnosis</h2>
+<div class=card><div class=label>Observed failure (from events)</div><p>unit_price raised ZeroDivisionError at baseline.py:4 for quantity 0 (EV1, EV2, EV4).</p><div class=label>Inferred cause (model's interpretation, confidence: high)</div><p>The division by 2 * quantity is evaluated when quantity is 0.</p><div class=label>Patch rationale</div><p>Simulated: guards the division but targets text that is not in the file.</p></div>
+<div class=card><b>Checks on the proposal (done in code)</b><ul><li><span class="badge bad">error</span><code>edit_does_not_apply</code> Edit 1: find text matches 0 times (must match exactly once).</li></ul></div>
+<h2>Proposed diff</h2>
+<p class=muted>No patch was applied. The baseline is unchanged.</p>
+<h2>Fixed check: before and after</h2>
+<div class=scroll><table><tr><th>Case</th><th>Args</th><th>Expected (frozen)</th><th>Baseline</th><th>Candidate</th><th>Change</th></tr><tr><td><b>zero-quantity</b> <span class="badge info">target</span></td><td><code>[0, 0]</code></td><td>0</td><td>raises ZeroDivisionError <span class="badge bad">fail</span></td><td><span class="muted">not run</span></td><td>same</td></tr><tr><td><b>ordinary</b></td><td><code>[1000, 2]</code></td><td>500</td><td>500 <span class="badge ok">pass</span></td><td><span class="muted">not run</span></td><td>same</td></tr><tr><td><b>rounding</b></td><td><code>[1001, 2]</code></td><td>501</td><td>501 <span class="badge ok">pass</span></td><td><span class="muted">not run</span></td><td>same</td></tr><tr><td><b>zero-total</b></td><td><code>[0, 4]</code></td><td>0</td><td>0 <span class="badge ok">pass</span></td><td><span class="muted">not run</span></td><td>same</td></tr><tr><td><b>single</b></td><td><code>[1999, 1]</code></td><td>1999</td><td>1999 <span class="badge ok">pass</span></td><td><span class="muted">not run</span></td><td>same</td></tr></table></div>
+<div class=card><b>Commands and raw output</b>
+<details><summary><code>python3 check.py baseline.py</code> → exit 1 (0.031s)</summary><pre>[
+  {
+    &quot;id&quot;: &quot;zero-quantity&quot;,
+    &quot;args&quot;: [
+      0,
+      0
+    ],
+    &quot;expected&quot;: 0,
+    &quot;error&quot;: &quot;ZeroDivisionError&quot;,
+    &quot;passed&quot;: false
+  },
+  {
+    &quot;id&quot;: &quot;ordinary&quot;,
+    &quot;args&quot;: [
+      1000,
+      2
+    ],
+    &quot;expected&quot;: 500,
+    &quot;actual&quot;: 500,
+    &quot;passed&quot;: true
+  },
+  {
+    &quot;id&quot;: &quot;rounding&quot;,
+    &quot;args&quot;: [
+      1001,
+      2
+    ],
+    &quot;expected&quot;: 501,
+    &quot;actual&quot;: 501,
+    &quot;passed&quot;: true
+  },
+  {
+    &quot;id&quot;: &quot;zero-total&quot;,
+    &quot;args&quot;: [
+      0,
+      4
+    ],
+    &quot;expected&quot;: 0,
+    &quot;actual&quot;: 0,
+    &quot;passed&quot;: true
+  },
+  {
+    &quot;id&quot;: &quot;single&quot;,
+    &quot;args&quot;: [
+      1999,
+      1
+    ],
+    &quot;expected&quot;: 1999,
+    &quot;actual&quot;: 1999,
+    &quot;passed&quot;: true
+  }
+]
+</pre></details>
+<details><summary><code>python3 check.py baseline.py --case zero-quantity</code> → exit 1 (0.03s)</summary><pre>[
+  {
+    &quot;id&quot;: &quot;zero-quantity&quot;,
+    &quot;args&quot;: [
+      0,
+      0
+    ],
+    &quot;expected&quot;: 0,
+    &quot;error&quot;: &quot;ZeroDivisionError&quot;,
+    &quot;passed&quot;: false
+  }
+]
+</pre></details>
+</div>
+<h2>What this run does not establish</h2><ul>
+<li>A passing status covers only the 5 recorded reference cases. It is not a proof of correctness for other inputs.</li>
+<li>The candidate ran in a subprocess with a timeout, not in a sandbox. The patch was screened for imports and dynamic-execution builtins before running.</li>
+<li>The inferred cause is the model's interpretation. Only the observed failure and the test results are recorded facts.</li>
+</ul>
+<h2>Provenance and reproduction</h2><div class=card>
+<p><span class="badge warn">SIMULATED response (negative control)</span><span class="muted">The find text does not exist in baseline.py, so the patch cannot apply. Expected outcome: failed, baseline unchanged, no candidate tested.</span></p><pre>{
+  &quot;settings&quot;: {
+    &quot;model&quot;: &quot;claude-opus-5-5&quot;,
+    &quot;effort&quot;: &quot;medium&quot;,
+    &quot;fallbacks&quot;: true,
+    &quot;check_timeout_s&quot;: 30,
+    &quot;response_file&quot;: &quot;/home/matej/provectus-ai-task/incident-patch-assistant/fixtures/simulated/patch-does-not-apply.json&quot;
+  },
+  &quot;provenance&quot;: {
+    &quot;source&quot;: &quot;simulated&quot;,
+    &quot;description&quot;: &quot;The find text does not exist in baseline.py, so the patch cannot apply. Expected outcome: failed, baseline unchanged, no candidate tested.&quot;,
+    &quot;note&quot;: &quot;Handwritten negative-control fixture. NOT a model output.&quot;
+  },
+  &quot;usage&quot;: null
+}</pre>
+<p class=muted>Artifacts in <code>runs/20261006T171202Z-ev1-sim-patch-does-not-apply/</code>: <code>evidence/events.json</code>, <code>evidence/files.json</code>, <code>checks/baseline-full.json</code>, <code>checks/baseline-case-zero-quantity.json</code>, <code>model/request.json</code>, <code>model/response.json</code>, <code>model/proposal.json</code>, <code>run.json</code></p>
+<p class=muted>Replay without an API key: <code>python -m assistant replay runs/20261006T171202Z-ev1-sim-patch-does-not-apply --recheck</code></p></div>
+</main></body></html>

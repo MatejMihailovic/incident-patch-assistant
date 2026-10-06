@@ -4,7 +4,7 @@ import json
 import sys
 from pathlib import Path
 
-from . import config, evidence, pipeline
+from . import config, demo, evidence, pipeline
 from .report import write_report
 
 
@@ -77,55 +77,31 @@ def cmd_replay(args):
     return 0
 
 
-def latest_live_run(runs_dir=None):
-    """Find the most recent run whose model response came from a real API call.
-
-    :param runs_dir: Folder to search; defaults to :data:`assistant.config.RUNS_DIR`.
-    :type runs_dir: pathlib.Path or str or None
-    :returns: That run's directory, or ``None`` if no live run exists.
-    :rtype: pathlib.Path or None
-    """
-    for run_dir in sorted(Path(runs_dir or config.RUNS_DIR).glob("*/"), reverse=True):
-        response = run_dir / "model" / "response.json"
-        if response.exists() and json.loads(response.read_text())["provenance"]["source"] == "live":
-            return run_dir
-    return None
-
-
 def cmd_demo(args):
-    """Run the minimum demonstration set and print a Markdown results table.
+    """Run the minimum demonstration set, grade the brief's five checks, and write ``RESULTS.md``.
 
     Runs one real proposal (a new live call with ``--live``, otherwise a replay of the latest saved
     live response) plus every simulated negative control in ``fixtures/simulated/``.
 
-    :param args: Parsed arguments with ``event`` and ``live``.
+    :param args: Parsed arguments with ``event``, ``live`` and ``out``.
     :type args: argparse.Namespace
-    :returns: ``0`` when all scenarios ran (whatever their status), ``2`` if there is no saved live
-        run to replay.
+    :returns: ``0`` if all five checks pass, ``1`` if any fails, ``2`` if there is no saved live run to replay.
     :rtype: int
     """
-    scenarios = []
-    if args.live:
-        scenarios.append(("real model proposal (live call)", None))
-    else:
-        live = latest_live_run()
-        if live is None:
-            print("No saved live run found; run `python -m assistant run --event EV1` with an API key first.", file=sys.stderr)
-            return 2
-        scenarios.append((f"real model proposal (replay of {live.name})", live / "model" / "response.json"))
-    simulated = sorted((config.FIXTURES / "simulated").glob("*.json"))
-    scenarios += [(f"negative control: {p.stem}", p) for p in simulated]
-
-    rows = []
-    for title, response_file in scenarios:
-        print(f"\n== {title}")
-        run_dir = pipeline.execute(args.event, response_file=response_file)
-        meta = _summary(run_dir)
-        rows.append((title, meta))
-    print("\n| Scenario | Status | Run |\n|---|---|---|")
-    for title, meta in rows:
-        print(f"| {title} | {meta['status']} | `runs/{meta['run_id']}` |")
-    return 0
+    try:
+        scenarios = demo.run_scenarios(args.event, live=args.live)
+    except RuntimeError as exc:
+        print(exc, file=sys.stderr)
+        return 2
+    for run_dir in [scenarios["real"], *scenarios["simulated"]]:
+        _summary(run_dir)
+    rows = demo.grade(scenarios)
+    path = demo.write_results(rows, scenarios, args.out)
+    print()
+    for n, row in enumerate(rows, start=1):
+        print(f"check {n}: {'PASS' if row['passed'] else 'FAIL'}  {row['check']}")
+    print(f"\n{sum(r['passed'] for r in rows)}/{len(rows)} checks passed; table written to {path}")
+    return 0 if all(r["passed"] for r in rows) else 1
 
 
 def main(argv=None):
@@ -154,10 +130,11 @@ def main(argv=None):
     replay.add_argument("--recheck", action="store_true", help="rerun the fixed check on the saved candidate and compare")
     replay.set_defaults(func=cmd_replay)
 
-    demo = sub.add_parser("demo", help="run the minimum demonstration set")
-    demo.add_argument("--event", default="EV1")
-    demo.add_argument("--live", action="store_true", help="make a new live call instead of replaying the saved one")
-    demo.set_defaults(func=cmd_demo)
+    demo_cmd = sub.add_parser("demo", help="run the minimum demonstration set and write RESULTS.md")
+    demo_cmd.add_argument("--event", default="EV1")
+    demo_cmd.add_argument("--live", action="store_true", help="make a new live call instead of replaying the saved one")
+    demo_cmd.add_argument("--out", type=Path, default=config.ROOT / "RESULTS.md", help="results table path")
+    demo_cmd.set_defaults(func=cmd_demo)
 
     args = parser.parse_args(argv)
     return args.func(args)

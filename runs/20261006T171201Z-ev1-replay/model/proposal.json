@@ -1,0 +1,40 @@
+{
+  "relevant_event_ids": [
+    "EV1",
+    "EV2",
+    "EV4"
+  ],
+  "excluded_events": [
+    {
+      "event_id": "EV3",
+      "reason": "Raises ValueError at baseline.py:3 for total_cents=-1. This is the specified rejection of a negative input, not the zero-quantity failure."
+    },
+    {
+      "event_id": "EV5",
+      "reason": "The loader rejected this malformed event because its 'error' and 'source' are missing or invalid, so it is not usable as evidence."
+    }
+  ],
+  "observed_failure": "unit_price raised ZeroDivisionError at baseline.py:4. EV1 and EV2 record this for total_cents=0, quantity=0. EV4 records it for total_cents=1500, quantity=0, with the traceback line 'return (2 * total_cents + quantity) // (2 * quantity)' and the message 'integer division or modulo by zero'.",
+  "source_location": {
+    "file": "baseline.py",
+    "line": 4
+  },
+  "inferred_cause": "After validation, line 4 always computes the rounded quotient (2*total_cents + quantity) // (2*quantity). It has no special case for quantity == 0, so the divisor 2*quantity is zero and Python raises ZeroDivisionError. Rule 1 requires quantity zero to return 0. The evidence is direct: the traceback, the inputs and the code all agree.",
+  "confidence": "high",
+  "patch": {
+    "file": "baseline.py",
+    "edits": [
+      {
+        "find": "    return (2 * total_cents + quantity) // (2 * quantity)",
+        "replace": "    if quantity == 0:\n        return 0\n    return (2 * total_cents + quantity) // (2 * quantity)"
+      }
+    ]
+  },
+  "patch_rationale": "The patch adds a quantity == 0 guard after the existing negative-input validation and before the division, returning 0 as rule 1 requires. Validation and the half-up rounding expression for positive quantities are unchanged. The edit is applied to a separate candidate copy of the module; the original baseline.py stays unchanged, as rule 3 requires.",
+  "untested_risks": [
+    "Negative total_cents with quantity 0 (e.g. -5, 0) could fall under two rules: rule 1's 'negative arguments raise ValueError' and its 'quantity zero returns zero'. The patch keeps validation first, so ValueError wins. No reference case covers this input.",
+    "A nonzero total with quantity 0 (e.g. 1500, 0, as in EV4) now returns 0, following rule 1 literally. No reference case covers a nonzero total with zero quantity.",
+    "Non-integer or non-numeric inputs, such as floats, bools or None, are not covered by the rules or the reference cases. Their behaviour is unchanged and untested.",
+    "The patched candidate has not been run against check.py here, so passing the reference cases is expected but not verified."
+  ]
+}

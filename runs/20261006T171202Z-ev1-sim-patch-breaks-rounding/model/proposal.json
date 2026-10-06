@@ -1,0 +1,31 @@
+{
+  "relevant_event_ids": [
+    "EV1",
+    "EV2",
+    "EV4"
+  ],
+  "excluded_events": [
+    {
+      "event_id": "EV3",
+      "reason": "Expected ValueError for a negative total; a different failure."
+    }
+  ],
+  "observed_failure": "unit_price raised ZeroDivisionError at baseline.py:4 for quantity 0 (EV1, EV2, EV4).",
+  "source_location": {
+    "file": "baseline.py",
+    "line": 4
+  },
+  "inferred_cause": "The division by 2 * quantity is evaluated when quantity is 0.",
+  "confidence": "high",
+  "untested_risks": [],
+  "patch": {
+    "file": "baseline.py",
+    "edits": [
+      {
+        "find": "    return (2 * total_cents + quantity) // (2 * quantity)",
+        "replace": "    if quantity == 0:\n        return 0\n    return total_cents // quantity"
+      }
+    ]
+  },
+  "patch_rationale": "Simulated: a plausible-looking simplification that silently drops the rounding rule."
+}

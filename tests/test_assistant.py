@@ -186,6 +186,16 @@ def test_unknown_event_fails_cleanly(tmp_path):
     assert meta["status"] == "failed" and "EV42" in meta["status_reasons"][0]
 
 
+def test_unreproduced_incident_stops_before_the_model(tmp_path, monkeypatch):
+    def must_not_call(_request):
+        raise AssertionError("model must not be called")
+    monkeypatch.setattr(model, "call_model", must_not_call)
+    run_dir = pipeline.execute("EV3", runs_dir=tmp_path / "runs")
+    meta = load_meta(run_dir)
+    assert meta["status"] == "failed" and meta["target_cases"] == []
+    assert "No reference case reproduces ValueError" in meta["status_reasons"][0]
+
+
 def test_tampered_fixture_stops_the_run_before_the_model(tmp_path, monkeypatch):
     manifest = json.loads(config.FROZEN_MANIFEST.read_text())
     manifest["files"]["fixtures/incidents/reference-cases.json"] = "0" * 64
@@ -195,6 +205,18 @@ def test_tampered_fixture_stops_the_run_before_the_model(tmp_path, monkeypatch):
     run_dir = pipeline.execute("EV1", response_file=write_response(tmp_path, make_proposal()), runs_dir=tmp_path / "runs")
     assert load_meta(run_dir)["status"] == "failed"
     assert not (run_dir / "model").exists()
+
+
+def test_demo_grades_all_five_checks(tmp_path, monkeypatch):
+    from assistant import demo
+    live_record = json.loads(write_response(tmp_path, make_proposal(), source="live").read_text())
+    live_record["provenance"]["request_id"] = "req_test_double"
+    monkeypatch.setattr(model, "call_model", lambda _request: live_record)
+    pipeline.execute("EV1", runs_dir=tmp_path / "runs")  # stands in for a saved live run
+    scenarios = demo.run_scenarios("EV1", runs_dir=tmp_path / "runs")
+    rows = demo.grade(scenarios)
+    assert [r["passed"] for r in rows] == [True] * 5, [r["observed"] for r in rows]
+    assert "5/5 checks passed" in demo.write_results(rows, scenarios, tmp_path / "RESULTS.md").read_text()
 
 
 def test_saved_live_response_replays_and_rechecks(tmp_path):
