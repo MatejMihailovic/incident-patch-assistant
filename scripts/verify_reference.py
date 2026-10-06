@@ -13,6 +13,19 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 def rule_unit_price(total_cents, quantity):
+    """Compute the unit price directly from the domain rules.
+
+    Validation is applied first, so ``(-1, 0)`` raises here. That precedence is an ambiguity in the
+    rules, and the case is marked ungraded in the fixtures.
+
+    :param total_cents: Total in integer cents.
+    :type total_cents: int
+    :param quantity: Whole-number quantity.
+    :type quantity: int
+    :returns: ``0`` for quantity zero, otherwise ``total_cents / quantity`` rounded half up.
+    :rtype: int
+    :raises ValueError: If either argument is negative.
+    """
     if total_cents < 0 or quantity < 0:
         raise ValueError("negative")
     if quantity == 0:
@@ -21,6 +34,11 @@ def rule_unit_price(total_cents, quantity):
 
 
 def main():
+    """Compare every committed expectation with :func:`rule_unit_price` and print a table.
+
+    :returns: Process exit code: ``0`` if all graded expectations agree, ``1`` otherwise.
+    :rtype: int
+    """
     ok = True
     reference = json.loads((ROOT / "fixtures/incidents/reference-cases.json").read_text())
     extra = json.loads((ROOT / "fixtures/additions/extra-inputs.json").read_text())["cases"]

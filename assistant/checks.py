@@ -13,7 +13,20 @@ _ENV = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
 
 
 def run_check(module_path, case_id=None, timeout=config.CHECK_TIMEOUT_S):
-    """Run `python3 check.py <module> [--case ID]` from the frozen task folder and keep everything it printed."""
+    """Run ``python3 check.py <module> [--case ID]`` from the frozen task folder and keep everything it printed.
+
+    :param module_path: Module to evaluate: the frozen baseline or a candidate copy.
+    :type module_path: pathlib.Path or str
+    :param case_id: Run only this reference case; ``None`` runs the full set.
+    :type case_id: str or None
+    :param timeout: Seconds before the subprocess is killed.
+    :type timeout: float
+    :returns: ``command`` (as typed from the task folder, so it can be rerun by hand), ``case``,
+        ``exit_code`` (``None`` on timeout), ``timed_out``, ``duration_s``, ``stdout``, ``stderr``,
+        ``results`` (check.py's per-case list, or ``None`` if it did not produce one) and
+        ``load_error`` (check.py's error object if the module could not be imported).
+    :rtype: dict
+    """
     module_path = Path(module_path).resolve()
     command = [sys.executable, "check.py", str(module_path)] + (["--case", case_id] if case_id else [])
     display = " ".join(["python3", "check.py", _display_path(module_path)] + (["--case", case_id] if case_id else []))
@@ -38,17 +51,25 @@ def run_check(module_path, case_id=None, timeout=config.CHECK_TIMEOUT_S):
     return result
 
 
-def all_passed(check):
-    return (check["exit_code"] == 0 and not check["timed_out"] and check["results"] is not None
-            and all(r["passed"] for r in check["results"]))
-
-
 def failing_ids(check):
+    """List the reference cases that did not pass.
+
+    :param check: Result from :func:`run_check`.
+    :type check: dict
+    :returns: IDs of failing cases; empty if none failed or no results were produced.
+    :rtype: list[str]
+    """
     return [r["id"] for r in check["results"] or [] if not r["passed"]]
 
 
 def _display_path(path):
-    """Path as typed from the task folder, so the recorded command can be rerun by hand."""
+    """Express a module path relative to the task folder, so the recorded command can be rerun by hand.
+
+    :param path: Absolute module path.
+    :type path: pathlib.Path
+    :returns: Path relative to :data:`assistant.config.REPO_DIR`.
+    :rtype: str
+    """
     return os.path.relpath(path, config.REPO_DIR)
 
 
@@ -69,7 +90,20 @@ print(json.dumps(out))
 
 
 def run_extra_inputs(module_path, function, cases, timeout=config.CHECK_TIMEOUT_S):
-    """Evaluate the supplementary inputs in a subprocess. Returns a list of observed outcomes or an error dict."""
+    """Evaluate the supplementary inputs in a subprocess, separately from the fixed check.
+
+    :param module_path: Module to evaluate.
+    :type module_path: pathlib.Path or str
+    :param function: Name of the function to call, taken from the incident.
+    :type function: str
+    :param cases: Cases from ``extra-inputs.json``; only ``id`` and ``args`` are sent to the subprocess.
+    :type cases: list[dict]
+    :param timeout: Seconds before the subprocess is killed.
+    :type timeout: float
+    :returns: One ``{"id", "actual"}`` or ``{"id", "error"}`` per case, or a single ``{"error": ...}``
+        if the module could not be loaded or timed out.
+    :rtype: list[dict] or dict
+    """
     payload = json.dumps([{"id": c["id"], "args": c["args"]} for c in cases])
     try:
         proc = subprocess.run([sys.executable, "-c", _HARNESS, str(Path(module_path).resolve()), function, payload],
@@ -82,7 +116,15 @@ def run_extra_inputs(module_path, function, cases, timeout=config.CHECK_TIMEOUT_
 
 
 def grade_extra(case, observed):
-    """Return 'pass', 'fail' or 'ungraded' (for documented ambiguities)."""
+    """Grade one supplementary input against its handwritten expectation.
+
+    :param case: Case from ``extra-inputs.json`` with ``expected``, ``expected_error`` or ``ambiguous``.
+    :type case: dict
+    :param observed: Matching entry from :func:`run_extra_inputs`.
+    :type observed: dict
+    :returns: ``"pass"``, ``"fail"``, or ``"ungraded"`` for a documented ambiguity.
+    :rtype: str
+    """
     if case.get("ambiguous"):
         return "ungraded"
     if "expected_error" in case:

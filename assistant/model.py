@@ -60,17 +60,52 @@ PROPOSAL_SCHEMA = {
 
 
 class ModelError(Exception):
+    """Any failure to obtain a usable model response.
+
+    :param kind: Stable machine-readable category, e.g. ``"auth"``, ``"unavailable"``,
+        ``"refusal"``, ``"truncated"`` or ``"invalid_response_file"``.
+    :type kind: str
+    :param message: Human-readable explanation shown in the run status and report.
+    :type message: str
+    """
+
     def __init__(self, kind, message):
         super().__init__(message)
         self.kind = kind
 
 
 def _now():
+    """Current UTC time for provenance records.
+
+    :returns: ISO 8601 timestamp with second precision.
+    :rtype: str
+    """
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 def build_request(selected_event_id, events, malformed, files, model, effort):
-    """Return the exact Messages API parameters. `files` maps a repo-relative name to its text."""
+    """Build the exact Messages API parameters for one diagnosis request.
+
+    Repository content is wrapped in XML-style tags so the system prompt can tell the
+    model to treat it as data rather than instructions.
+
+    :param selected_event_id: Event the developer selected, e.g. ``"EV1"``.
+    :type selected_event_id: str
+    :param events: All valid events; internal keys starting with ``_`` are stripped.
+    :type events: list[dict]
+    :param malformed: Loader problems, shown to the model as unusable evidence.
+    :type malformed: list[dict]
+    :param files: Maps a repository-relative file name to its text. Must include ``"domain.md"``.
+        Python files are sent with line numbers.
+    :type files: dict[str, str]
+    :param model: Model ID, e.g. ``"claude-opus-5-5"``.
+    :type model: str
+    :param effort: Effort level: ``"low"``, ``"medium"``, ``"high"``, ``"xhigh"`` or ``"max"``.
+    :type effort: str
+    :returns: Keyword arguments for ``messages.create`` (or ``beta.messages.create`` when
+        ``betas`` is present). JSON-serialisable, so the request is saved verbatim with the run.
+    :rtype: dict
+    """
     public_events = [{k: v for k, v in e.items() if not k.startswith("_")} for e in events]
     parts = [
         f"<task>The developer selected event {selected_event_id}. Diagnose that failure and propose a patch.</task>",
@@ -99,7 +134,19 @@ def build_request(selected_event_id, events, malformed, files, model, effort):
 
 
 def call_model(request):
-    """Make one real API call. Raises ModelError with a stable `kind` on any failure."""
+    """Make one real API call.
+
+    The SDK already retries connection errors, 408, 409, 429 and 5xx responses.
+
+    :param request: Parameters from :func:`build_request`.
+    :type request: dict
+    :returns: ``{"provenance": {...}, "response": {...}}``. Provenance has ``source="live"``, the
+        requested and served model, the request ID and a timestamp. ``response`` is the full API
+        message as a dict.
+    :rtype: dict
+    :raises ModelError: On authentication, rate-limit, bad-request, server, connection or
+        client-configuration errors (for example, no credentials).
+    """
     import anthropic
 
     try:
@@ -135,7 +182,18 @@ def call_model(request):
 
 
 def load_response_file(path):
-    """Load a saved response. A saved live response is relabelled as a replay; its original provenance is kept."""
+    """Load a saved or simulated response instead of calling the API.
+
+    A saved live response is relabelled ``source="replay"`` and keeps its original provenance under
+    ``original``. Simulated fixtures keep ``source="simulated"``.
+
+    :param path: A ``model/response.json`` from an earlier run, or a file in ``fixtures/simulated/``.
+    :type path: pathlib.Path or str
+    :returns: A response record in the same shape as :func:`call_model` returns.
+    :rtype: dict
+    :raises ModelError: ``missing_response_file`` if the path does not exist, or
+        ``invalid_response_file`` if it is not a response record.
+    """
     path = Path(path)
     if not path.exists():
         raise ModelError("missing_response_file", f"response file not found: {path}")
@@ -152,7 +210,15 @@ def load_response_file(path):
 
 
 def response_text(record):
-    """Return the JSON text of the final answer, or raise ModelError when there is none."""
+    """Extract the final answer text from a response record.
+
+    :param record: Record from :func:`call_model` or :func:`load_response_file`.
+    :type record: dict
+    :returns: Text of the last ``text`` content block, which should be the proposal JSON.
+    :rtype: str
+    :raises ModelError: ``refusal`` if the model declined, ``truncated`` if it hit ``max_tokens``,
+        or ``no_text`` if there is no text block.
+    """
     response = record["response"]
     stop = response.get("stop_reason")
     if stop == "refusal":

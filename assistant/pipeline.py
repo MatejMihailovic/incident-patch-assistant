@@ -8,11 +8,27 @@ from .report import write_report
 
 
 def _now():
+    """Current UTC time.
+
+    :returns: Timezone-aware timestamp.
+    :rtype: datetime.datetime
+    """
     return datetime.now(timezone.utc)
 
 
 class Run:
-    """Owns one run directory. Every artifact is written as soon as it exists, so a crash still leaves evidence."""
+    """Owns one run directory. Every artifact is written as soon as it exists, so a crash still leaves evidence.
+
+    The directory is named ``<UTC timestamp>-<event>-<source label>``, with a numeric suffix if it
+    already exists. ``meta`` is mirrored to ``run.json`` on every status change.
+
+    :param runs_dir: Parent folder for run directories; resolved to an absolute path.
+    :type runs_dir: pathlib.Path or str
+    :param event_id: Selected event, used in the directory name.
+    :type event_id: str
+    :param source_label: ``"live"``, ``"replay"`` or ``"sim-<name>"``, used in the directory name.
+    :type source_label: str
+    """
 
     def __init__(self, runs_dir, event_id, source_label):
         stamp = _now().strftime("%Y%m%dT%H%M%SZ")
@@ -29,24 +45,59 @@ class Run:
                      "findings": [], "artifacts": []}
 
     def save_json(self, name, data):
+        """Write a JSON artifact and record it in ``meta["artifacts"]``.
+
+        :param name: Path relative to the run directory; parent folders are created.
+        :type name: str
+        :param data: JSON-serialisable content.
+        :type data: object
+        """
         (self.dir / name).parent.mkdir(parents=True, exist_ok=True)
         (self.dir / name).write_text(json.dumps(data, indent=2) + "\n")
         self._track(name)
 
     def save_text(self, name, text):
+        """Write a text artifact (candidate module, diff) and record it in ``meta["artifacts"]``.
+
+        :param name: File name relative to the run directory.
+        :type name: str
+        :param text: Content to write.
+        :type text: str
+        """
         (self.dir / name).write_text(text)
         self._track(name)
 
     def _track(self, name):
+        """Add an artifact name to the run's artifact list once.
+
+        :param name: Path relative to the run directory.
+        :type name: str
+        """
         if name not in self.meta["artifacts"]:
             self.meta["artifacts"].append(name)
 
     def set_status(self, status, *reasons):
+        """Update the status, append reasons, and persist ``run.json``.
+
+        :param status: ``"started"``, ``"proposed"``, ``"checked"`` or ``"failed"``.
+        :type status: str
+        :param reasons: Human-readable explanations to append.
+        :type reasons: str
+        """
         self.meta["status"] = status
         self.meta["status_reasons"].extend(reasons)
         self.save_json("run.json", self.meta)
 
     def finish(self, status, *reasons):
+        """Set the final status, write ``run.json`` and ``report.html``.
+
+        :param status: Final status, ``"checked"`` or ``"failed"``.
+        :type status: str
+        :param reasons: Human-readable explanations to append.
+        :type reasons: str
+        :returns: The run directory.
+        :rtype: pathlib.Path
+        """
         self.meta["finished_at"] = _now().isoformat(timespec="seconds")
         self.set_status(status, *reasons)
         write_report(self.dir)
@@ -54,6 +105,13 @@ class Run:
 
 
 def _source_label(response_file):
+    """Choose the run-directory suffix that tells a reader where the model response came from.
+
+    :param response_file: Saved or simulated response, or ``None`` for a live call.
+    :type response_file: pathlib.Path or str or None
+    :returns: ``"live"``, ``"sim-<file stem>"`` for files under a ``simulated`` folder, otherwise ``"replay"``.
+    :rtype: str
+    """
     if response_file is None:
         return "live"
     path = Path(response_file)
@@ -61,6 +119,28 @@ def _source_label(response_file):
 
 
 def execute(event_id, response_file=None, model_name=None, effort=None, runs_dir=None):
+    """Run the full workflow for one incident and save a review package.
+
+    Steps: verify frozen fixtures; load events and select the incident; run the fixed check on the
+    baseline; get a proposal (live call, or saved/simulated response); validate the diagnosis and
+    patch in code; check a separate candidate copy; evaluate the supplementary inputs; re-verify the
+    frozen fixtures; decide the status. Any failure ends the run with status ``"failed"`` and a
+    reason. Nothing is raised to the caller, and the baseline is never modified.
+
+    :param event_id: Event that selects the incident, e.g. ``"EV1"``.
+    :type event_id: str
+    :param response_file: Saved or simulated response to use instead of calling the API.
+    :type response_file: pathlib.Path or str or None
+    :param model_name: Model ID for a live call; defaults to :data:`assistant.config.MODEL`.
+    :type model_name: str or None
+    :param effort: Effort level for a live call; defaults to :data:`assistant.config.EFFORT`.
+    :type effort: str or None
+    :param runs_dir: Where to create the run directory; defaults to :data:`assistant.config.RUNS_DIR`.
+    :type runs_dir: pathlib.Path or str or None
+    :returns: The run directory, containing ``run.json`` (status ``"checked"`` or ``"failed"``),
+        ``report.html`` and every saved artifact.
+    :rtype: pathlib.Path
+    """
     model_name = model_name or config.MODEL
     effort = effort or config.EFFORT
     run = Run(runs_dir or config.RUNS_DIR, event_id, _source_label(response_file))
@@ -177,11 +257,25 @@ def execute(event_id, response_file=None, model_name=None, effort=None, runs_dir
 
 
 def recheck(run_dir):
-    """Rerun the fixed check on a saved candidate without calling the model, and compare with the saved results."""
+    """Rerun the fixed check on a saved run without calling the model, and compare with the saved results.
+
+    Also writes the comparison to ``replay-recheck.json`` in the run directory.
+
+    :param run_dir: Directory of an earlier run.
+    :type run_dir: pathlib.Path or str
+    :returns: ``checked_at``; ``baseline`` and ``candidate``, each ``{"available": False}`` or
+        ``{"available": True, "reproduced": bool, "exit_code": int}``; and ``integrity``
+        from :func:`assistant.integrity.verify_frozen`.
+    :rtype: dict
+    """
     run_dir = Path(run_dir)
+    incident = json.loads((run_dir / "run.json").read_text()).get("incident")
+    baseline_path = config.REPO_DIR / incident["module"] if incident else None
     comparison = {"checked_at": _now().isoformat(timespec="seconds")}
-    for label, module_path in (("baseline", config.REPO_DIR / json.loads((run_dir / "run.json").read_text())
-                                ["incident"]["module"]), ("candidate", run_dir / "candidate.py")):
+    for label, module_path in (("baseline", baseline_path), ("candidate", run_dir / "candidate.py")):
+        if module_path is None:
+            comparison[label] = {"available": False}
+            continue
         saved_path = run_dir / "checks" / f"{label}-full.json"
         if not module_path.exists() or not saved_path.exists():
             comparison[label] = {"available": False}

@@ -9,6 +9,13 @@ from .report import write_report
 
 
 def cmd_incidents(_args):
+    """Print incidents grouped from the recorded events, then any malformed events.
+
+    :param _args: Parsed arguments (unused).
+    :type _args: argparse.Namespace
+    :returns: Process exit code, always ``0``.
+    :rtype: int
+    """
     events, malformed = evidence.load_events()
     for inc in evidence.group_incidents(events):
         print(f"{inc.id}: {inc.function} raised {inc.error} at {inc.source}  events={','.join(inc.event_ids)}")
@@ -18,6 +25,13 @@ def cmd_incidents(_args):
 
 
 def _summary(run_dir):
+    """Print a run's status, reasons and report path.
+
+    :param run_dir: Run directory.
+    :type run_dir: pathlib.Path or str
+    :returns: Contents of the run's ``run.json``.
+    :rtype: dict
+    """
     meta = json.loads((Path(run_dir) / "run.json").read_text())
     source = (meta.get("provenance") or {}).get("source", "none")
     print(f"{meta['status'].upper():8} {meta['run_id']}  (model response: {source})")
@@ -28,12 +42,26 @@ def _summary(run_dir):
 
 
 def cmd_run(args):
+    """Run the pipeline for one incident.
+
+    :param args: Parsed arguments with ``event``, ``response_file``, ``model`` and ``effort``.
+    :type args: argparse.Namespace
+    :returns: ``0`` if the run ends ``checked``, otherwise ``1``.
+    :rtype: int
+    """
     run_dir = pipeline.execute(args.event, response_file=args.response_file, model_name=args.model, effort=args.effort)
     meta = _summary(run_dir)
     return 0 if meta["status"] == "checked" else 1
 
 
 def cmd_replay(args):
+    """Regenerate a saved run's report without calling the model, optionally rerunning the fixed check.
+
+    :param args: Parsed arguments with ``run_dir`` and ``recheck``.
+    :type args: argparse.Namespace
+    :returns: ``0`` on success, ``2`` if ``run_dir`` is not a run directory.
+    :rtype: int
+    """
     run_dir = Path(args.run_dir)
     if not (run_dir / "run.json").exists():
         print(f"not a run directory: {run_dir}", file=sys.stderr)
@@ -50,7 +78,13 @@ def cmd_replay(args):
 
 
 def latest_live_run(runs_dir=None):
-    """Most recent committed run whose model response came from a real API call."""
+    """Find the most recent run whose model response came from a real API call.
+
+    :param runs_dir: Folder to search; defaults to :data:`assistant.config.RUNS_DIR`.
+    :type runs_dir: pathlib.Path or str or None
+    :returns: That run's directory, or ``None`` if no live run exists.
+    :rtype: pathlib.Path or None
+    """
     for run_dir in sorted(Path(runs_dir or config.RUNS_DIR).glob("*/"), reverse=True):
         response = run_dir / "model" / "response.json"
         if response.exists() and json.loads(response.read_text())["provenance"]["source"] == "live":
@@ -59,7 +93,17 @@ def latest_live_run(runs_dir=None):
 
 
 def cmd_demo(args):
-    """Minimum demonstration: real proposal (live, or replay of a saved real response) plus two negative controls."""
+    """Run the minimum demonstration set and print a Markdown results table.
+
+    Runs one real proposal (a new live call with ``--live``, otherwise a replay of the latest saved
+    live response) plus every simulated negative control in ``fixtures/simulated/``.
+
+    :param args: Parsed arguments with ``event`` and ``live``.
+    :type args: argparse.Namespace
+    :returns: ``0`` when all scenarios ran (whatever their status), ``2`` if there is no saved live
+        run to replay.
+    :rtype: int
+    """
     scenarios = []
     if args.live:
         scenarios.append(("real model proposal (live call)", None))
@@ -85,6 +129,13 @@ def cmd_demo(args):
 
 
 def main(argv=None):
+    """Parse arguments and dispatch to a subcommand.
+
+    :param argv: Arguments without the program name; defaults to ``sys.argv[1:]``.
+    :type argv: list[str] or None
+    :returns: Process exit code from the subcommand.
+    :rtype: int
+    """
     parser = argparse.ArgumentParser(prog="python -m assistant", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
 

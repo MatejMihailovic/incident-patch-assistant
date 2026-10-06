@@ -29,11 +29,29 @@ details{margin:6px 0}summary{cursor:pointer;color:var(--muted)}ul{margin:6px 0;p
 
 
 def _load(run_dir, name):
+    """Read a JSON artifact if it exists. Runs that failed early have fewer artifacts.
+
+    :param run_dir: Run directory.
+    :type run_dir: pathlib.Path
+    :param name: Artifact path relative to the run directory.
+    :type name: str
+    :returns: Parsed JSON, or ``None`` if the artifact is absent.
+    :rtype: object or None
+    """
     path = run_dir / name
     return json.loads(path.read_text()) if path.exists() else None
 
 
 def _badge(text, kind):
+    """Render a coloured status pill.
+
+    :param text: Label; HTML-escaped.
+    :type text: str
+    :param kind: CSS class: ``"ok"``, ``"bad"``, ``"warn"`` or ``"info"``.
+    :type kind: str
+    :returns: HTML fragment.
+    :rtype: str
+    """
     return f'<span class="badge {kind}">{escape(text)}</span>'
 
 
@@ -41,6 +59,13 @@ STATUS_KIND = {"checked": "ok", "failed": "bad", "proposed": "warn", "started": 
 
 
 def _outcome(result):
+    """Render one check result: the returned value or raised error, plus pass/fail when graded.
+
+    :param result: One entry of check.py's result list, or ``None`` if the case was not run.
+    :type result: dict or None
+    :returns: HTML fragment.
+    :rtype: str
+    """
     if result is None:
         return '<span class="muted">not run</span>'
     if "error" in result:
@@ -53,6 +78,13 @@ def _outcome(result):
 
 
 def _provenance(meta):
+    """Render where the model response came from: live call, replay of a saved real response, or simulated.
+
+    :param meta: Contents of ``run.json``.
+    :type meta: dict
+    :returns: HTML fragment.
+    :rtype: str
+    """
     prov = meta.get("provenance")
     if not prov:
         return _badge("no model response", "warn")
@@ -69,6 +101,15 @@ def _provenance(meta):
 
 
 def _source_listing(text, highlight):
+    """Render a numbered source listing.
+
+    :param text: Source file contents.
+    :type text: str
+    :param highlight: 1-based line numbers to highlight.
+    :type highlight: set[int]
+    :returns: HTML ``<pre>`` block.
+    :rtype: str
+    """
     rows = []
     for n, line in enumerate(text.splitlines(), start=1):
         cls = ' class="hl"' if n in highlight else ""
@@ -77,6 +118,13 @@ def _source_listing(text, highlight):
 
 
 def _diff_html(diff):
+    """Render a unified diff with added, removed and hunk lines coloured.
+
+    :param diff: Unified diff text.
+    :type diff: str
+    :returns: HTML ``<pre>`` block.
+    :rtype: str
+    """
     out = []
     for line in diff.splitlines():
         cls = ("hunk" if line.startswith("@@") else "add" if line.startswith("+") and not line.startswith("+++")
@@ -86,6 +134,13 @@ def _diff_html(diff):
 
 
 def _check_details(check):
+    """Render one check invocation as a collapsible block with its command, exit state and raw output.
+
+    :param check: Result from :func:`assistant.checks.run_check`, or ``None``.
+    :type check: dict or None
+    :returns: HTML ``<details>`` block, or an empty string.
+    :rtype: str
+    """
     if not check:
         return ""
     state = "timed out" if check["timed_out"] else f"exit {check['exit_code']}"
@@ -94,6 +149,17 @@ def _check_details(check):
 
 
 def build_html(run_dir):
+    """Build the review report for one run.
+
+    Sections: status and provenance, headline numbers, incident and evidence, cited source,
+    diagnosis and code findings, diff, before/after check table with raw command output,
+    supplementary inputs, what the run does not establish, and provenance/reproduction.
+
+    :param run_dir: Run directory created by :func:`assistant.pipeline.execute`.
+    :type run_dir: pathlib.Path or str
+    :returns: Complete self-contained HTML document.
+    :rtype: str
+    """
     run_dir = Path(run_dir)
     meta = _load(run_dir, "run.json") or {}
     ev = _load(run_dir, "evidence/events.json") or {"events": [], "malformed": []}
@@ -118,6 +184,13 @@ def build_html(run_dir):
 
     # Headline numbers
     def passed(check):
+        """Format a pass count for the headline cards.
+
+        :param check: Result from :func:`assistant.checks.run_check`, or ``None``.
+        :type check: dict or None
+        :returns: ``"passed/total"``, or an em dash when there are no results.
+        :rtype: str
+        """
         res = (check or {}).get("results")
         return f"{sum(r['passed'] for r in res)}/{len(res)}" if res else "—"
     target_after = "—"
@@ -211,9 +284,10 @@ def build_html(run_dir):
     if cand_full and cand_full.get("load_error"):
         h.append(f"<div class=card>{_badge('candidate failed to load', 'bad')} {escape(json.dumps(cand_full['load_error']))}</div>")
     h.append("<div class=card><b>Commands and raw output</b>")
-    for name in sorted(p.name for p in (run_dir / "checks").glob("*-full.json")) + sorted(
-            p.name for p in (run_dir / "checks").glob("*-case-*.json")) if (run_dir / "checks").exists() else []:
-        h.append(_check_details(_load(run_dir, f"checks/{name}")))
+    check_dir = run_dir / "checks"
+    for pattern in ("*-full.json", "*-case-*.json"):
+        for path in sorted(check_dir.glob(pattern)):
+            h.append(_check_details(_load(run_dir, f"checks/{path.name}")))
     h.append("</div>")
 
     # Supplementary inputs
@@ -278,6 +352,13 @@ def build_html(run_dir):
 
 
 def write_report(run_dir):
+    """Write ``report.html`` into the run directory.
+
+    :param run_dir: Run directory.
+    :type run_dir: pathlib.Path or str
+    :returns: Path of the written report.
+    :rtype: pathlib.Path
+    """
     path = Path(run_dir) / "report.html"
     path.write_text(build_html(run_dir))
     return path

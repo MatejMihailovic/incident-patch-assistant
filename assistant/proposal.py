@@ -13,16 +13,37 @@ MAX_CHANGED_LINES = 15
 
 
 class ProposalError(Exception):
-    pass
+    """The model's output is not valid JSON or does not match :data:`assistant.model.PROPOSAL_SCHEMA`."""
 
 
 def finding(level, code, message):
+    """Build one validation finding.
+
+    :param level: ``"error"`` (the run fails) or ``"warning"`` (shown to the reviewer only).
+    :type level: str
+    :param code: Stable identifier, e.g. ``"unrelated_event_cited"``.
+    :type code: str
+    :param message: Human-readable explanation.
+    :type message: str
+    :returns: ``{"level", "code", "message"}``.
+    :rtype: dict
+    """
     return {"level": level, "code": code, "message": message}
 
 
 def parse_proposal(text):
-    """Parse and structurally validate. Replayed and simulated responses never passed API-side schema
-    enforcement, so the check is repeated here for every source."""
+    """Parse the model's answer and check its structure.
+
+    Replayed and simulated responses never passed API-side schema enforcement, so the
+    check is repeated here for every source.
+
+    :param text: Raw answer text, expected to be a JSON object.
+    :type text: str
+    :returns: The parsed proposal.
+    :rtype: dict
+    :raises ProposalError: If the text is not JSON or does not match the schema. The message
+        lists up to five problems.
+    """
     try:
         data = json.loads(text)
     except json.JSONDecodeError as exc:
@@ -37,6 +58,20 @@ _TYPES = {"object": dict, "array": list, "string": str, "integer": int}
 
 
 def _schema_problems(value, schema, where):
+    """Recursively validate a value against the subset of JSON Schema used by the proposal schema.
+
+    Supports ``type`` (object, array, string, integer), ``enum``, ``required``, ``properties``,
+    ``items`` and ``additionalProperties: false``.
+
+    :param value: Value to check.
+    :type value: object
+    :param schema: Schema node for this value.
+    :type schema: dict
+    :param where: Dotted path used in messages, e.g. ``"proposal.patch.edits[0]"``.
+    :type where: str
+    :returns: Problems found; empty when the value is valid.
+    :rtype: list[str]
+    """
     kind = _TYPES[schema["type"]]
     if not isinstance(value, kind) or (kind is int and isinstance(value, bool)):
         return [f"{where} should be {schema['type']}"]
@@ -56,7 +91,20 @@ def _schema_problems(value, schema, where):
 
 
 def check_diagnosis(proposal, incident, all_event_ids, module_text):
-    """Check that cited evidence exists, belongs to the selected incident, and points at a real line."""
+    """Check that cited evidence exists, belongs to the selected incident, and points at a real line.
+
+    :param proposal: Parsed proposal from :func:`parse_proposal`.
+    :type proposal: dict
+    :param incident: The incident the developer selected, grouped in code.
+    :type incident: assistant.evidence.Incident
+    :param all_event_ids: IDs of every valid event, used to detect invented IDs.
+    :type all_event_ids: set[str]
+    :param module_text: Current text of the incident's module, used to check the cited line.
+    :type module_text: str
+    :returns: Findings. Errors: ``no_evidence``, ``unknown_event``, ``unrelated_event_cited``,
+        ``wrong_file``, ``line_out_of_range``. Warnings: ``evidence_not_cited``, ``line_differs``.
+    :rtype: list[dict]
+    """
     findings = []
     cited = proposal["relevant_event_ids"]
     if not cited:
@@ -87,7 +135,23 @@ def check_diagnosis(proposal, incident, all_event_ids, module_text):
 
 
 def apply_patch(proposal, incident, original_text):
-    """Return (candidate_text or None, findings). Never touches the file on disk."""
+    """Apply the proposal's find/replace edits to an in-memory copy of the module.
+
+    Never touches the file on disk. Each ``find`` must match exactly once, in order.
+
+    :param proposal: Parsed proposal from :func:`parse_proposal`.
+    :type proposal: dict
+    :param incident: The selected incident; its ``module`` is the only file a patch may target.
+    :type incident: assistant.evidence.Incident
+    :param original_text: Current text of the module.
+    :type original_text: str
+    :returns: A pair ``(candidate_text, findings)``. ``candidate_text`` is ``None`` when the patch is
+        rejected (``patch_outside_module``, ``empty_patch``, ``edit_does_not_apply``, ``no_change``,
+        ``syntax_error``, ``unsafe_construct``); the candidate must then not be executed. When text
+        is returned, ``findings`` may still hold an ``interface_changed`` error or a ``large_patch``
+        warning.
+    :rtype: tuple[str or None, list[dict]]
+    """
     patch = proposal["patch"]
     target = patch["file"]
     if target != incident.module or target in config.PROTECTED_FILES:
@@ -134,7 +198,15 @@ _BLOCKED_CALLS = {"exec", "eval", "compile", "open", "__import__", "globals", "s
 
 
 def _unsafe_constructs(tree):
-    """Imports and dynamic-execution builtins. The fixed check imports the candidate, so a patch is code we run."""
+    """Find imports and dynamic-execution builtins.
+
+    The fixed check imports the candidate, so a patch is code that this tool runs.
+
+    :param tree: Parsed module.
+    :type tree: ast.Module
+    :returns: Descriptions such as ``"an import"`` or ``"a call to eval()"``.
+    :rtype: set[str]
+    """
     found = set()
     for node in ast.walk(tree):
         if isinstance(node, (ast.Import, ast.ImportFrom)):
@@ -145,6 +217,15 @@ def _unsafe_constructs(tree):
 
 
 def _signature(tree, name):
+    """Describe a function's parameters so an interface change can be detected.
+
+    :param tree: Parsed module.
+    :type tree: ast.Module
+    :param name: Function name to look up.
+    :type name: str
+    :returns: ``{"args", "defaults", "vararg", "kwarg"}``, or ``None`` if the function is absent.
+    :rtype: dict or None
+    """
     for node in ast.walk(tree):
         if isinstance(node, ast.FunctionDef) and node.name == name:
             args = node.args
@@ -154,5 +235,16 @@ def _signature(tree, name):
 
 
 def diff_lines(old, new, name):
+    """Produce a unified diff between two versions of a file.
+
+    :param old: Original text.
+    :type old: str
+    :param new: Patched text.
+    :type new: str
+    :param name: File name used in the ``a/`` and ``b/`` headers.
+    :type name: str
+    :returns: Diff lines, each keeping its line ending.
+    :rtype: list[str]
+    """
     return list(difflib.unified_diff(old.splitlines(keepends=True), new.splitlines(keepends=True),
                                      fromfile=f"a/{name}", tofile=f"b/{name}"))
