@@ -1,0 +1,12 @@
+{
+  "description": "Supplementary input examples. Not part of the fixed check command; reported separately from the five frozen reference cases. Expected values derived by hand from domain.md and confirmed by scripts/verify_reference.py.",
+  "cases": [
+    {"id": "x-zero-qty-nonzero-total", "args": [1500, 0], "expected": 0, "rule": "domain rule 1: quantity zero returns zero"},
+    {"id": "x-half-up", "args": [5, 2], "expected": 3, "rule": "domain rule 2: 2.5 rounds half up to 3"},
+    {"id": "x-round-down", "args": [1, 3], "expected": 0, "rule": "domain rule 2: 0.333 rounds to 0"},
+    {"id": "x-round-up", "args": [2, 3], "expected": 1, "rule": "domain rule 2: 0.667 rounds to 1"},
+    {"id": "x-negative-total", "args": [-1, 1], "expected_error": "ValueError", "rule": "domain rule 1: negative arguments raise ValueError (matches EV3)"},
+    {"id": "x-negative-quantity", "args": [100, -2], "expected_error": "ValueError", "rule": "domain rule 1: negative arguments raise ValueError"},
+    {"id": "x-negative-total-zero-qty", "args": [-1, 0], "expected": null, "ambiguous": true, "rule": "AMBIGUOUS: rule 1 says quantity zero returns zero AND negative arguments raise ValueError; the domain does not say which wins. Observed behaviour is reported, not graded."}
+  ]
+}

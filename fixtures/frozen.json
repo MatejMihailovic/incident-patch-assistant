@@ -1,0 +1,10 @@
+{
+  "description": "SHA-256 of the starter-pack files that must never change. Copied byte-for-byte from client-ai-starter-pack/tasks/incidents (pack-version 2026-10-02). The assistant verifies these before and after every run.",
+  "files": {
+    "fixtures/incidents/baseline.py": "10f963cc0574ef8514956c43808e7f04bf2db791ff928b576ccea02c72dd296f",
+    "fixtures/incidents/check.py": "46fcd449698fb537d65b6441398915ad8d1c6de7d95697bcdaf2b11eb7f4e906",
+    "fixtures/incidents/domain.md": "cfb2cedcfcef87cae2e36f44bd95cf0733833248f9edbcb81fa5a483504f5b9d",
+    "fixtures/incidents/events.json": "b9636282b2087d726414aefe15e96cfb6f2dc36dced869833531b2ff891f47ae",
+    "fixtures/incidents/reference-cases.json": "19e33576dd6b11303421be861aa05a5b87e42c909be326be1db00ce8400c6475"
+  }
+}

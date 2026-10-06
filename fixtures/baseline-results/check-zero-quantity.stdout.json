@@ -1,0 +1,12 @@
+[
+  {
+    "id": "zero-quantity",
+    "args": [
+      0,
+      0
+    ],
+    "expected": 0,
+    "error": "ZeroDivisionError",
+    "passed": false
+  }
+]

@@ -1,0 +1,27 @@
+[
+  {
+    "event_id": "EV4",
+    "function": "unit_price",
+    "input": {
+      "total_cents": 1500,
+      "quantity": 0
+    },
+    "error": "ZeroDivisionError",
+    "message": "integer division or modulo by zero",
+    "traceback": [
+      "File \"baseline.py\", line 4, in unit_price",
+      "    return (2 * total_cents + quantity) // (2 * quantity)",
+      "ZeroDivisionError: integer division or modulo by zero"
+    ],
+    "source": "baseline.py:4",
+    "note": "Addition: same defect as EV1 with a nonzero total and a traceback-style payload."
+  },
+  {
+    "event_id": "EV5",
+    "function": "unit_price",
+    "input": {
+      "total_cents": 250
+    },
+    "note": "Addition: deliberately malformed (no quantity, error, or source). The loader must report it and continue."
+  }
+]
