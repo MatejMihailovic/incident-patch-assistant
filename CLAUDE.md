@@ -11,8 +11,15 @@ This repository is a take-home exercise (Junior AI Engineer, task E "incidents")
 - Simulated model responses live only in `fixtures/simulated/` and must carry `"provenance": {"source": "simulated"}`.
 - Never commit credentials. The API key is read from `ANTHROPIC_API_KEY` in the environment.
 
+## Conventions
+
+- Use `loguru`'s `logger` in `assistant/`, never `print`. Ruff's `T20` rule enforces this. Only the stdlib-only `scripts/` print.
+- Sphinx docstrings (`:param:`, `:type:`, `:returns:`, `:rtype:`, `:raises:`) on every function. pydoclint checks them.
+- Never run formatters or fixers on `fixtures/incidents/` or `runs/`.
+
 ## Commands
 
+- All checks: `.venv/bin/pre-commit run --all-files`
 - Tests: `.venv/bin/python -m pytest -q`
 - Independent expectation check: `python3 scripts/verify_reference.py`
 - Fixed check (from `fixtures/incidents/`): `python3 check.py baseline.py` (always with a timeout)

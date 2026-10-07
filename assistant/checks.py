@@ -1,4 +1,5 @@
 """Run the fixed check command, plus the supplementary inputs, with a timeout."""
+
 import json
 import os
 import subprocess
@@ -32,14 +33,32 @@ def run_check(module_path, case_id=None, timeout=config.CHECK_TIMEOUT_S):
     display = " ".join(["python3", "check.py", _display_path(module_path)] + (["--case", case_id] if case_id else []))
     started = time.monotonic()
     try:
-        proc = subprocess.run(command, cwd=config.REPO_DIR, capture_output=True, text=True, timeout=timeout, env=_ENV)
+        proc = subprocess.run(  # noqa: S603 - fixed argv, no shell; the module path is our own run directory
+            command, cwd=config.REPO_DIR, capture_output=True, text=True, timeout=timeout, env=_ENV, check=False
+        )
     except subprocess.TimeoutExpired as exc:
-        return {"command": display, "case": case_id, "exit_code": None, "timed_out": True,
-                "duration_s": round(time.monotonic() - started, 3),
-                "stdout": exc.stdout or "", "stderr": exc.stderr or "", "results": None, "load_error": None}
-    result = {"command": display, "case": case_id, "exit_code": proc.returncode, "timed_out": False,
-              "duration_s": round(time.monotonic() - started, 3),
-              "stdout": proc.stdout, "stderr": proc.stderr, "results": None, "load_error": None}
+        return {
+            "command": display,
+            "case": case_id,
+            "exit_code": None,
+            "timed_out": True,
+            "duration_s": round(time.monotonic() - started, 3),
+            "stdout": exc.stdout or "",
+            "stderr": exc.stderr or "",
+            "results": None,
+            "load_error": None,
+        }
+    result = {
+        "command": display,
+        "case": case_id,
+        "exit_code": proc.returncode,
+        "timed_out": False,
+        "duration_s": round(time.monotonic() - started, 3),
+        "stdout": proc.stdout,
+        "stderr": proc.stderr,
+        "results": None,
+        "load_error": None,
+    }
     try:
         parsed = json.loads(proc.stdout)
     except json.JSONDecodeError:
@@ -106,8 +125,14 @@ def run_extra_inputs(module_path, function, cases, timeout=config.CHECK_TIMEOUT_
     """
     payload = json.dumps([{"id": c["id"], "args": c["args"]} for c in cases])
     try:
-        proc = subprocess.run([sys.executable, "-c", _HARNESS, str(Path(module_path).resolve()), function, payload],
-                              capture_output=True, text=True, timeout=timeout, env=_ENV)
+        proc = subprocess.run(  # noqa: S603 - fixed argv, no shell; the module path is our own run directory
+            [sys.executable, "-c", _HARNESS, str(Path(module_path).resolve()), function, payload],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env=_ENV,
+            check=False,
+        )
     except subprocess.TimeoutExpired:
         return {"error": f"timed out after {timeout}s"}
     if proc.returncode != 0:

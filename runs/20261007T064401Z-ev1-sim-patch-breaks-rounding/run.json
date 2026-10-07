@@ -1,19 +1,14 @@
 {
-  "run_id": "20261006T171202Z-ev1-sim-patch-does-not-apply",
-  "created_at": "2026-10-06T17:12:02+00:00",
+  "run_id": "20261007T064401Z-ev1-sim-patch-breaks-rounding",
+  "created_at": "2026-10-07T06:44:01+00:00",
   "status": "failed",
   "status_reasons": [
-    "The proposed patch was rejected; the baseline is unchanged."
+    "Regression: case(s) that passed on the baseline now fail: rounding."
   ],
   "selected_event": "EV1",
-  "findings": [
-    {
-      "level": "error",
-      "code": "edit_does_not_apply",
-      "message": "Edit 1: find text matches 0 times (must match exactly once)."
-    }
-  ],
+  "findings": [],
   "artifacts": [
+    "run.log",
     "evidence/events.json",
     "evidence/files.json",
     "checks/baseline-full.json",
@@ -21,17 +16,33 @@
     "model/request.json",
     "model/response.json",
     "model/proposal.json",
-    "run.json"
+    "run.json",
+    "candidate.py",
+    "patch.diff",
+    "checks/candidate-full.json",
+    "checks/candidate-case-zero-quantity.json",
+    "checks/extra-inputs.json"
   ],
   "settings": {
     "model": "claude-opus-5-5",
     "effort": "medium",
     "fallbacks": true,
     "check_timeout_s": 30,
-    "response_file": "/home/matej/provectus-ai-task/incident-patch-assistant/fixtures/simulated/patch-does-not-apply.json"
+    "response_file": "/home/matej/provectus-ai-task/incident-patch-assistant/fixtures/simulated/patch-breaks-rounding.json"
   },
   "integrity": {
     "before": {
+      "ok": true,
+      "checked": [
+        "fixtures/incidents/baseline.py",
+        "fixtures/incidents/check.py",
+        "fixtures/incidents/domain.md",
+        "fixtures/incidents/events.json",
+        "fixtures/incidents/reference-cases.json"
+      ],
+      "mismatches": []
+    },
+    "after": {
       "ok": true,
       "checked": [
         "fixtures/incidents/baseline.py",
@@ -64,8 +75,8 @@
   ],
   "provenance": {
     "source": "simulated",
-    "description": "The find text does not exist in baseline.py, so the patch cannot apply. Expected outcome: failed, baseline unchanged, no candidate tested.",
+    "description": "The patch applies and fixes zero quantity but replaces half-up rounding with floor division. Expected outcome: failed, regression on the 'rounding' reference case.",
     "note": "Handwritten negative-control fixture. NOT a model output."
   },
-  "finished_at": "2026-10-06T17:12:02+00:00"
+  "finished_at": "2026-10-07T06:44:01+00:00"
 }

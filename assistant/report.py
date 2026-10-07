@@ -3,9 +3,13 @@
 The report reads only files in the run directory, so it can be regenerated
 offline (no model call, no API key) from a committed run.
 """
+
 import json
+from dataclasses import dataclass
 from html import escape
 from pathlib import Path
+
+from .checks import grade_extra
 
 CSS = """
 :root{--bg:#fbfbfa;--fg:#1d1d1b;--muted:#6b6b66;--card:#fff;--line:#e3e2dd;--ok:#1f7a3a;--okbg:#e6f4ea;
@@ -68,10 +72,7 @@ def _outcome(result):
     """
     if result is None:
         return '<span class="muted">not run</span>'
-    if "error" in result:
-        text = f"raises {result['error']}"
-    else:
-        text = json.dumps(result.get("actual"))
+    text = f"raises {result['error']}" if "error" in result else json.dumps(result.get("actual"))
     if "passed" in result:
         return f"{escape(text)} {_badge('pass', 'ok') if result['passed'] else _badge('fail', 'bad')}"
     return escape(text)
@@ -89,15 +90,21 @@ def _provenance(meta):
     if not prov:
         return _badge("no model response", "warn")
     if prov["source"] == "live":
-        return (_badge("LIVE model call", "info") +
-                f'<span class="muted">{escape(prov.get("served_model") or "")} · request {escape(prov.get("request_id") or "?")}</span>')
+        return (
+            _badge("LIVE model call", "info")
+            + f'<span class="muted">{escape(prov.get("served_model") or "")} · request {escape(prov.get("request_id") or "?")}</span>'
+        )
     if prov["source"] == "replay":
         orig = prov.get("original", {})
-        return (_badge("REPLAY of a saved real response", "info") +
-                f'<span class="muted">originally {escape(orig.get("served_model") or "?")} · request '
-                f'{escape(orig.get("request_id") or "?")} · {escape(orig.get("received_at") or "")}</span>')
-    return (_badge("SIMULATED response (negative control)", "warn") +
-            f'<span class="muted">{escape(prov.get("description", ""))}</span>')
+        return (
+            _badge("REPLAY of a saved real response", "info")
+            + f'<span class="muted">originally {escape(orig.get("served_model") or "?")} · request '
+            f"{escape(orig.get('request_id') or '?')} · {escape(orig.get('received_at') or '')}</span>"
+        )
+    return (
+        _badge("SIMULATED response (negative control)", "warn")
+        + f'<span class="muted">{escape(prov.get("description", ""))}</span>'
+    )
 
 
 def _source_listing(text, highlight):
@@ -127,8 +134,15 @@ def _diff_html(diff):
     """
     out = []
     for line in diff.splitlines():
-        cls = ("hunk" if line.startswith("@@") else "add" if line.startswith("+") and not line.startswith("+++")
-               else "del" if line.startswith("-") and not line.startswith("---") else "")
+        cls = (
+            "hunk"
+            if line.startswith("@@")
+            else "add"
+            if line.startswith("+") and not line.startswith("+++")
+            else "del"
+            if line.startswith("-") and not line.startswith("---")
+            else ""
+        )
         out.append(f'<span class="{cls}">{escape(line)}</span>' if cls else escape(line))
     return "<pre>" + "\n".join(out) + "</pre>"
 
@@ -144,211 +158,477 @@ def _check_details(check):
     if not check:
         return ""
     state = "timed out" if check["timed_out"] else f"exit {check['exit_code']}"
-    return (f"<details><summary><code>{escape(check['command'])}</code> → {escape(state)} "
-            f"({check['duration_s']}s)</summary><pre>{escape(check['stdout'] or '')}{escape(check['stderr'] or '')}</pre></details>")
+    return (
+        f"<details><summary><code>{escape(check['command'])}</code> → {escape(state)} "
+        f"({check['duration_s']}s)</summary><pre>{escape(check['stdout'] or '')}{escape(check['stderr'] or '')}</pre></details>"
+    )
+
+
+@dataclass
+class RunData:
+    """Everything a report needs, loaded once from a run directory. Missing artifacts are ``None``.
+
+    :param dir: Run directory.
+    :type dir: pathlib.Path
+    :param meta: Contents of ``run.json``.
+    :type meta: dict
+    :param evidence: Contents of ``evidence/events.json``.
+    :type evidence: dict
+    :param files: Contents of ``evidence/files.json``.
+    :type files: dict
+    :param proposal: Parsed proposal, if one was produced.
+    :type proposal: dict or None
+    :param model_error: Model failure record, if the call failed.
+    :type model_error: dict or None
+    :param response: Saved model response record.
+    :type response: dict or None
+    :param base_full: Full-set check on the baseline.
+    :type base_full: dict or None
+    :param cand_full: Full-set check on the candidate.
+    :type cand_full: dict or None
+    :param extra: Supplementary-input results.
+    :type extra: dict or None
+    :param recheck: Offline recheck comparison, if a replay ran one.
+    :type recheck: dict or None
+    :param diff: Unified diff of the patch, if one was applied.
+    :type diff: str or None
+    """
+
+    dir: Path
+    meta: dict
+    evidence: dict
+    files: dict
+    proposal: dict | None
+    model_error: dict | None
+    response: dict | None
+    base_full: dict | None
+    cand_full: dict | None
+    extra: dict | None
+    recheck: dict | None
+    diff: str | None
+
+    @property
+    def incident(self):
+        """The selected incident, or ``None`` if the run stopped before selecting one.
+
+        :returns: Incident fields from ``run.json``.
+        :rtype: dict or None
+        """
+        return self.meta.get("incident")
+
+    @property
+    def targets(self):
+        """Reference cases that reproduced the incident on the baseline.
+
+        :returns: Case IDs.
+        :rtype: list[str]
+        """
+        return self.meta.get("target_cases", [])
+
+
+def load_run(run_dir):
+    """Load all report inputs from a run directory.
+
+    :param run_dir: Run directory.
+    :type run_dir: pathlib.Path or str
+    :returns: The loaded run.
+    :rtype: RunData
+    """
+    run_dir = Path(run_dir)
+    diff_path = run_dir / "patch.diff"
+    return RunData(
+        dir=run_dir,
+        meta=_load(run_dir, "run.json") or {},
+        evidence=_load(run_dir, "evidence/events.json") or {"events": [], "malformed": []},
+        files=_load(run_dir, "evidence/files.json") or {},
+        proposal=_load(run_dir, "model/proposal.json"),
+        model_error=_load(run_dir, "model/error.json"),
+        response=_load(run_dir, "model/response.json"),
+        base_full=_load(run_dir, "checks/baseline-full.json"),
+        cand_full=_load(run_dir, "checks/candidate-full.json"),
+        extra=_load(run_dir, "checks/extra-inputs.json"),
+        recheck=_load(run_dir, "replay-recheck.json"),
+        diff=diff_path.read_text() if diff_path.exists() else None,
+    )
+
+
+def _pass_count(check):
+    """Format a pass count for the headline cards.
+
+    :param check: Result from :func:`assistant.checks.run_check`, or ``None``.
+    :type check: dict or None
+    :returns: ``"passed/total"``, or an em dash when there are no results.
+    :rtype: str
+    """
+    results = (check or {}).get("results")
+    return f"{sum(r['passed'] for r in results)}/{len(results)}" if results else "—"
+
+
+def _section_header(d):
+    """Title, run ID, status badge, provenance and status reasons.
+
+    :param d: Loaded run.
+    :type d: RunData
+    :returns: HTML fragment.
+    :rtype: str
+    """
+    status = d.meta.get("status", "unknown")
+    title = d.incident["id"] if d.incident else d.meta.get("selected_event", "?")
+    reasons = "".join(f"<li>{escape(r)}</li>" for r in d.meta.get("status_reasons", []))
+    return (
+        f"<h1>Incident review: {escape(title)}</h1>"
+        f"<div class=muted>Run <code>{escape(d.meta.get('run_id', ''))}</code> · "
+        f"{escape(d.meta.get('created_at', ''))}</div>"
+        f"<div class=card>{_badge(status.upper(), STATUS_KIND.get(status, 'warn'))} {_provenance(d.meta)}"
+        f"<ul>{reasons}</ul></div>"
+    )
+
+
+def _section_headline(d):
+    """Four headline cards: target before/after, pass counts, frozen-file integrity.
+
+    :param d: Loaded run.
+    :type d: RunData
+    :returns: HTML fragment.
+    :rtype: str
+    """
+    target_after = "—"
+    if d.cand_full and d.cand_full.get("results") and d.targets:
+        ok = all(r["passed"] for r in d.cand_full["results"] if r["id"] in d.targets)
+        target_after = "passes" if ok else "still fails"
+    integrity = d.meta.get("integrity", {})
+    intact = all(v.get("ok") for v in integrity.values()) if integrity else None
+    cards = (
+        ("Failing case(s) on baseline", ", ".join(d.targets) or "none"),
+        ("Failing case(s) after patch", target_after),
+        ("Reference cases: baseline → candidate", f"{_pass_count(d.base_full)} → {_pass_count(d.cand_full)}"),
+        ("Frozen fixtures unchanged", {True: "yes", False: "NO", None: "—"}[intact]),
+    )
+    return (
+        "<div class=grid>"
+        + "".join(
+            f"<div class=card><div class=label>{escape(label)}</div><div><b>{escape(value)}</b></div></div>"
+            for label, value in cards
+        )
+        + "</div>"
+    )
+
+
+def _model_view(d, event_id):
+    """Describe how the model treated one event.
+
+    :param d: Loaded run.
+    :type d: RunData
+    :param event_id: Event to describe.
+    :type event_id: str
+    :returns: ``"cited as evidence"``, ``"excluded: <reason>"``, ``"not mentioned"``, or an em dash without a proposal.
+    :rtype: str
+    """
+    if not d.proposal:
+        return "—"
+    if event_id in d.proposal["relevant_event_ids"]:
+        return "cited as evidence"
+    excluded = {e["event_id"]: e["reason"] for e in d.proposal["excluded_events"]}
+    return f"excluded: {excluded[event_id]}" if event_id in excluded else "not mentioned"
+
+
+def _section_evidence(d):
+    """The selected incident, every event with code grouping vs. model view, and malformed events.
+
+    :param d: Loaded run.
+    :type d: RunData
+    :returns: HTML fragment.
+    :rtype: str
+    """
+    parts = ["<h2>Incident and evidence</h2>"]
+    inc = d.incident
+    if inc:
+        parts.append(
+            f"<p>Selected event <b>{escape(d.meta['selected_event'])}</b> belongs to incident <b>{escape(inc['id'])}</b>: "
+            f"<code>{escape(inc['function'])}</code> raised <code>{escape(inc['error'])}</code> at "
+            f"<code>{escape(inc['source'])}</code>. Events are grouped by code on (function, error, source), "
+            "independently of the model.</p>"
+        )
+    cited = set(d.proposal["relevant_event_ids"]) if d.proposal else set()
+    rows = []
+    for e in d.evidence["events"]:
+        same = bool(inc) and e["event_id"] in inc["event_ids"]
+        flag = _badge("unrelated but cited", "bad") if e["event_id"] in cited and not same else ""
+        grouping = _badge("same failure", "info") if same else _badge("different failure", "warn")
+        rows.append(
+            f"<tr><td><b>{escape(e['event_id'])}</b></td><td><code>{escape(json.dumps(e['input']))}</code></td>"
+            f"<td>{escape(e['error'])}</td><td><code>{escape(e['source'])}</code></td><td>{grouping}</td>"
+            f"<td>{escape(_model_view(d, e['event_id']))} {flag}</td>"
+            f"<td class=muted>{escape(e.get('note', ''))}<br>{escape(e['_origin'])}</td></tr>"
+        )
+    parts.append(
+        "<div class=scroll><table><tr><th>Event</th><th>Input</th><th>Error</th><th>Source</th><th>Code grouping</th>"
+        "<th>Model</th><th>Note / file</th></tr>" + "".join(rows) + "</table></div>"
+    )
+    if d.evidence["malformed"]:
+        items = "".join(
+            f"<li><code>{escape(str(m.get('event_id')))}</code> in {escape(m['file'])}: {escape(m['problem'])}</li>"
+            for m in d.evidence["malformed"]
+        )
+        parts.append(f"<div class=card><b>Malformed events (reported, not used):</b><ul>{items}</ul></div>")
+    return "".join(parts)
+
+
+def _section_source(d):
+    """Numbered listing of the incident's module with the event line and the model's cited line highlighted.
+
+    :param d: Loaded run.
+    :type d: RunData
+    :returns: HTML fragment, or an empty string if no source was captured.
+    :rtype: str
+    """
+    inc = d.incident
+    if not inc or inc["module"] not in d.files:
+        return ""
+    cited_line = d.proposal["source_location"]["line"] if d.proposal else None
+    lines = {inc["line"], cited_line} - {None}
+    note = f"line {inc['line']} (from events)" + (f", line {cited_line} (cited by model)" if cited_line else "")
+    return (
+        f"<h2>Cited source: {escape(inc['module'])}</h2><div class=muted>Highlighted: {note}</div>"
+        + _source_listing(d.files[inc["module"]]["text"], lines)
+    )
+
+
+def _section_diagnosis(d):
+    """Observed failure vs. inferred cause, or the model error, plus the code findings on the proposal.
+
+    :param d: Loaded run.
+    :type d: RunData
+    :returns: HTML fragment.
+    :rtype: str
+    """
+    parts = ["<h2>Diagnosis</h2>"]
+    p = d.proposal
+    if p:
+        parts.append(
+            f"<div class=card><div class=label>Observed failure (from events)</div><p>{escape(p['observed_failure'])}</p>"
+            f"<div class=label>Inferred cause (model's interpretation, confidence: {escape(p['confidence'])})</div>"
+            f"<p>{escape(p['inferred_cause'])}</p><div class=label>Patch rationale</div>"
+            f"<p>{escape(p['patch_rationale'])}</p></div>"
+        )
+    elif d.model_error:
+        parts.append(
+            f"<div class=card>{_badge('model error', 'bad')} <b>{escape(d.model_error['kind'])}</b>: "
+            f"{escape(d.model_error['message'])}</div>"
+        )
+    else:
+        parts.append("<p class=muted>No usable proposal was produced.</p>")
+    findings = d.meta.get("findings", [])
+    if findings:
+        items = "".join(
+            f"<li>{_badge(f['level'], 'bad' if f['level'] == 'error' else 'warn')}<code>{escape(f['code'])}</code> "
+            f"{escape(f['message'])}</li>"
+            for f in findings
+        )
+        parts.append(f"<div class=card><b>Checks on the proposal (done in code)</b><ul>{items}</ul></div>")
+    elif p:
+        parts.append(
+            f"<div class=card>{_badge('no findings', 'ok')} Cited events exist and belong to the incident, the cited "
+            "line exists, and the patch applies cleanly to the chosen module without changing its interface.</div>"
+        )
+    return "".join(parts)
+
+
+def _section_diff(d):
+    """The proposed diff, or a note that no patch was applied.
+
+    :param d: Loaded run.
+    :type d: RunData
+    :returns: HTML fragment.
+    :rtype: str
+    """
+    body = _diff_html(d.diff) if d.diff else "<p class=muted>No patch was applied. The baseline is unchanged.</p>"
+    return "<h2>Proposed diff</h2>" + body
+
+
+def _section_checks(d):
+    """Per-case before/after table for the fixed check, plus every command with its raw output.
+
+    :param d: Loaded run.
+    :type d: RunData
+    :returns: HTML fragment.
+    :rtype: str
+    """
+    parts = ["<h2>Fixed check: before and after</h2>"]
+    if d.base_full and d.base_full.get("results"):
+        cand = {r["id"]: r for r in (d.cand_full or {}).get("results") or []}
+        rows = []
+        for r in d.base_full["results"]:
+            c = cand.get(r["id"])
+            changed = c is not None and (c.get("passed") != r["passed"] or c.get("actual") != r.get("actual"))
+            target = " " + _badge("target", "info") if r["id"] in d.targets else ""
+            rows.append(
+                f"<tr><td><b>{escape(r['id'])}</b>{target}</td><td><code>{escape(json.dumps(r['args']))}</code></td>"
+                f"<td>{escape(json.dumps(r['expected']))}</td><td>{_outcome(r)}</td><td>{_outcome(c)}</td>"
+                f"<td>{'changed' if changed else 'same'}</td></tr>"
+            )
+        parts.append(
+            "<div class=scroll><table><tr><th>Case</th><th>Args</th><th>Expected (frozen)</th><th>Baseline</th>"
+            "<th>Candidate</th><th>Change</th></tr>" + "".join(rows) + "</table></div>"
+        )
+    if d.cand_full and d.cand_full.get("load_error"):
+        parts.append(
+            f"<div class=card>{_badge('candidate failed to load', 'bad')} "
+            f"{escape(json.dumps(d.cand_full['load_error']))}</div>"
+        )
+    check_files = [p for pattern in ("*-full.json", "*-case-*.json") for p in sorted((d.dir / "checks").glob(pattern))]
+    details = "".join(_check_details(_load(d.dir, f"checks/{p.name}")) for p in check_files)
+    parts.append(f"<div class=card><b>Commands and raw output</b>{details}</div>")
+    return "".join(parts)
+
+
+def _extra_cell(case, observed):
+    """Render one observed supplementary-input outcome with its grade.
+
+    :param case: Case from ``extra-inputs.json``.
+    :type case: dict
+    :param observed: Observed outcome, or ``None`` if unavailable.
+    :type observed: dict or None
+    :returns: HTML fragment.
+    :rtype: str
+    """
+    if observed is None:
+        return "<span class=muted>—</span>"
+    text = f"raises {observed['error']}" if "error" in observed else json.dumps(observed["actual"])
+    badge = {"pass": ("pass", "ok"), "fail": ("fail", "bad"), "ungraded": ("ungraded", "warn")}[
+        grade_extra(case, observed)
+    ]
+    return f"{escape(text)} {_badge(*badge)}"
+
+
+def _section_extra(d):
+    """Supplementary inputs on both versions, flagging any change on a documented ambiguity.
+
+    :param d: Loaded run.
+    :type d: RunData
+    :returns: HTML fragment, or an empty string if the inputs were not evaluated.
+    :rtype: str
+    """
+    if not d.extra or not isinstance(d.extra.get("baseline"), list):
+        return ""
+    base_obs = {o["id"]: o for o in d.extra["baseline"]}
+    cand_obs = {o["id"]: o for o in d.extra["candidate"]} if isinstance(d.extra.get("candidate"), list) else {}
+    rows = []
+    for case in d.extra["cases"]:
+        if "expected_error" in case:
+            expected = "raises " + case["expected_error"]
+        else:
+            expected = "ambiguous" if case.get("ambiguous") else json.dumps(case["expected"])
+        b, c = base_obs.get(case["id"]), cand_obs.get(case["id"])
+        note = escape(case["rule"])
+        if case.get("ambiguous") and b and c and b != c:
+            note = _badge("behaviour changed from baseline: reviewer decision needed", "warn") + " " + note
+        rows.append(
+            f"<tr><td>{escape(case['id'])}</td><td><code>{escape(json.dumps(case['args']))}</code></td>"
+            f"<td>{escape(expected)}</td><td>{_extra_cell(case, b)}</td><td>{_extra_cell(case, c)}</td>"
+            f"<td class=muted>{note}</td></tr>"
+        )
+    return (
+        "<h2>Supplementary inputs (not part of the fixed check)</h2>"
+        "<p class=muted>Handwritten additions from <code>fixtures/additions/extra-inputs.json</code>, verified "
+        "independently by <code>scripts/verify_reference.py</code>. They inform the reviewer but do not decide the "
+        "run status.</p><div class=scroll><table><tr><th>Case</th><th>Args</th><th>Expected</th><th>Baseline</th>"
+        "<th>Candidate</th><th>Rule</th></tr>" + "".join(rows) + "</table></div>"
+    )
+
+
+def _section_limits(d):
+    """What the run does not establish, including the model's own (unverified) risk list.
+
+    :param d: Loaded run.
+    :type d: RunData
+    :returns: HTML fragment.
+    :rtype: str
+    """
+    n_ref = len((d.base_full or {}).get("results") or [])
+    extra = f" and is accompanied by {len(d.extra['cases'])} supplementary inputs" if d.extra else ""
+    items = [
+        (
+            f"A passing status covers only the {n_ref} recorded reference cases{extra}. "
+            "It is not a proof of correctness for other inputs."
+        ),
+        (
+            "The candidate ran in a subprocess with a timeout, not in a sandbox. The patch was screened for imports "
+            "and dynamic-execution builtins before running."
+        ),
+        (
+            "The inferred cause is the model's interpretation. Only the observed failure and the test results are "
+            "recorded facts."
+        ),
+    ]
+    html = "".join(f"<li>{escape(i)}</li>" for i in items)
+    if d.proposal and d.proposal["untested_risks"]:
+        risks = "".join(f"<li>{escape(r)}</li>" for r in d.proposal["untested_risks"])
+        html += f"<li>Model-reported risks (not verified by this tool):<ul>{risks}</ul></li>"
+    return f"<h2>What this run does not establish</h2><ul>{html}</ul>"
+
+
+def _section_provenance(d):
+    """Settings, provenance, token usage, offline recheck result, artifact list and replay command.
+
+    :param d: Loaded run.
+    :type d: RunData
+    :returns: HTML fragment.
+    :rtype: str
+    """
+    run_id = escape(d.meta.get("run_id", ""))
+    usage = (d.response or {}).get("response", {}).get("usage")
+    record = {"settings": d.meta.get("settings"), "provenance": d.meta.get("provenance", {}), "usage": usage}
+    parts = [
+        (
+            f"<h2>Provenance and reproduction</h2><div class=card><p>{_provenance(d.meta)}</p>"
+            f"<pre>{escape(json.dumps(record, indent=2))}</pre>"
+        )
+    ]
+    if d.recheck:
+        ok = all(d.recheck.get(k, {}).get("reproduced", True) for k in ("baseline", "candidate"))
+        parts.append(
+            f"<p>{_badge('re-checked offline', 'ok' if ok else 'bad')} at {escape(d.recheck['checked_at'])}: saved "
+            f"test results {'reproduced exactly' if ok else 'DID NOT reproduce'} when the fixed check was rerun.</p>"
+        )
+    artifacts = ", ".join(f"<code>{escape(a)}</code>" for a in d.meta.get("artifacts", []))
+    parts.append(
+        f"<p class=muted>Artifacts in <code>runs/{run_id}/</code>: {artifacts}</p>"
+        f"<p class=muted>Replay without an API key: "
+        f"<code>python -m assistant replay runs/{run_id} --recheck</code></p></div>"
+    )
+    return "".join(parts)
+
+
+SECTIONS = (
+    _section_header,
+    _section_headline,
+    _section_evidence,
+    _section_source,
+    _section_diagnosis,
+    _section_diff,
+    _section_checks,
+    _section_extra,
+    _section_limits,
+    _section_provenance,
+)
 
 
 def build_html(run_dir):
-    """Build the review report for one run.
-
-    Sections: status and provenance, headline numbers, incident and evidence, cited source,
-    diagnosis and code findings, diff, before/after check table with raw command output,
-    supplementary inputs, what the run does not establish, and provenance/reproduction.
+    """Build the review report for one run from its saved artifacts.
 
     :param run_dir: Run directory created by :func:`assistant.pipeline.execute`.
     :type run_dir: pathlib.Path or str
     :returns: Complete self-contained HTML document.
     :rtype: str
     """
-    run_dir = Path(run_dir)
-    meta = _load(run_dir, "run.json") or {}
-    ev = _load(run_dir, "evidence/events.json") or {"events": [], "malformed": []}
-    files = _load(run_dir, "evidence/files.json") or {}
-    proposal = _load(run_dir, "model/proposal.json")
-    model_error = _load(run_dir, "model/error.json")
-    base_full = _load(run_dir, "checks/baseline-full.json")
-    cand_full = _load(run_dir, "checks/candidate-full.json")
-    extra = _load(run_dir, "checks/extra-inputs.json")
-    recheck = _load(run_dir, "replay-recheck.json")
-    diff = (run_dir / "patch.diff").read_text() if (run_dir / "patch.diff").exists() else None
-    incident = meta.get("incident")
-    targets = meta.get("target_cases", [])
-    status = meta.get("status", "unknown")
-
-    h = [f"<!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'>"
-         f"<title>Incident review {escape(meta.get('run_id', ''))}</title><style>{CSS}</style></head><body><main>"]
-    h.append(f"<h1>Incident review: {escape(incident['id'] if incident else meta.get('selected_event', '?'))}</h1>")
-    h.append(f"<div class=muted>Run <code>{escape(meta.get('run_id', ''))}</code> · {escape(meta.get('created_at', ''))}</div>")
-    h.append(f'<div class=card>{_badge(status.upper(), STATUS_KIND.get(status, "warn"))} {_provenance(meta)}<ul>'
-             + "".join(f"<li>{escape(r)}</li>" for r in meta.get("status_reasons", [])) + "</ul></div>")
-
-    # Headline numbers
-    def passed(check):
-        """Format a pass count for the headline cards.
-
-        :param check: Result from :func:`assistant.checks.run_check`, or ``None``.
-        :type check: dict or None
-        :returns: ``"passed/total"``, or an em dash when there are no results.
-        :rtype: str
-        """
-        res = (check or {}).get("results")
-        return f"{sum(r['passed'] for r in res)}/{len(res)}" if res else "—"
-    target_after = "—"
-    if cand_full and cand_full.get("results") and targets:
-        ok = all(r["passed"] for r in cand_full["results"] if r["id"] in targets)
-        target_after = "passes" if ok else "still fails"
-    integ = meta.get("integrity", {})
-    integ_ok = all(v.get("ok") for v in integ.values()) if integ else None
-    h.append("<div class=grid>")
-    for label, value in (("Failing case(s) on baseline", ", ".join(targets) or "none"),
-                         ("Failing case(s) after patch", target_after),
-                         ("Reference cases: baseline → candidate", f"{passed(base_full)} → {passed(cand_full)}"),
-                         ("Frozen fixtures unchanged", "yes" if integ_ok else "NO" if integ_ok is False else "—")):
-        h.append(f"<div class=card><div class=label>{escape(label)}</div><div><b>{escape(value)}</b></div></div>")
-    h.append("</div>")
-
-    # Evidence
-    h.append("<h2>Incident and evidence</h2>")
-    if incident:
-        h.append(f"<p>Selected event <b>{escape(meta['selected_event'])}</b> belongs to incident <b>{escape(incident['id'])}</b>: "
-                 f"<code>{escape(incident['function'])}</code> raised <code>{escape(incident['error'])}</code> at "
-                 f"<code>{escape(incident['source'])}</code>. Events are grouped by code on (function, error, source), "
-                 f"independently of the model.</p>")
-    cited = set(proposal["relevant_event_ids"]) if proposal else set()
-    excluded = {e["event_id"]: e["reason"] for e in proposal["excluded_events"]} if proposal else {}
-    rows = []
-    for e in ev["events"]:
-        same = incident and e["event_id"] in incident["event_ids"]
-        model_view = ("cited as evidence" if e["event_id"] in cited else
-                      f"excluded: {excluded[e['event_id']]}" if e["event_id"] in excluded else "not mentioned") if proposal else "—"
-        flag = _badge("unrelated but cited", "bad") if (e["event_id"] in cited and not same) else ""
-        rows.append(f"<tr><td><b>{escape(e['event_id'])}</b></td><td><code>{escape(json.dumps(e['input']))}</code></td>"
-                    f"<td>{escape(e['error'])}</td><td><code>{escape(e['source'])}</code></td>"
-                    f"<td>{_badge('same failure', 'info') if same else _badge('different failure', 'warn')}</td>"
-                    f"<td>{escape(model_view)} {flag}</td><td class=muted>{escape(e.get('note', ''))}<br>{escape(e['_origin'])}</td></tr>")
-    h.append("<div class=scroll><table><tr><th>Event</th><th>Input</th><th>Error</th><th>Source</th><th>Code grouping</th>"
-             "<th>Model</th><th>Note / file</th></tr>" + "".join(rows) + "</table></div>")
-    if ev["malformed"]:
-        h.append("<div class=card><b>Malformed events (reported, not used):</b><ul>" + "".join(
-            f"<li><code>{escape(str(m.get('event_id')))}</code> in {escape(m['file'])}: {escape(m['problem'])}</li>"
-            for m in ev["malformed"]) + "</ul></div>")
-
-    # Cited source
-    if incident and incident["module"] in files:
-        lines = {incident["line"]}
-        cited_line = proposal["source_location"]["line"] if proposal else None
-        if cited_line:
-            lines.add(cited_line)
-        h.append(f"<h2>Cited source: {escape(incident['module'])}</h2>")
-        h.append(f"<div class=muted>Highlighted: line {incident['line']} (from events)"
-                 + (f", line {cited_line} (cited by model)" if cited_line else "") + "</div>")
-        h.append(_source_listing(files[incident["module"]]["text"], lines))
-
-    # Diagnosis
-    h.append("<h2>Diagnosis</h2>")
-    if proposal:
-        h.append(f"<div class=card><div class=label>Observed failure (from events)</div><p>{escape(proposal['observed_failure'])}</p>"
-                 f"<div class=label>Inferred cause (model's interpretation, confidence: {escape(proposal['confidence'])})</div>"
-                 f"<p>{escape(proposal['inferred_cause'])}</p><div class=label>Patch rationale</div>"
-                 f"<p>{escape(proposal['patch_rationale'])}</p></div>")
-    elif model_error:
-        h.append(f"<div class='card'>{_badge('model error', 'bad')} <b>{escape(model_error['kind'])}</b>: {escape(model_error['message'])}</div>")
-    else:
-        h.append("<p class=muted>No usable proposal was produced.</p>")
-    findings = meta.get("findings", [])
-    if findings:
-        h.append("<div class=card><b>Checks on the proposal (done in code)</b><ul>" + "".join(
-            f"<li>{_badge(f['level'], 'bad' if f['level'] == 'error' else 'warn')}<code>{escape(f['code'])}</code> {escape(f['message'])}</li>"
-            for f in findings) + "</ul></div>")
-    elif proposal:
-        h.append(f"<div class=card>{_badge('no findings', 'ok')} Cited events exist and belong to the incident, the cited line "
-                 "exists, and the patch applies cleanly to the chosen module without changing its interface.</div>")
-
-    # Diff
-    h.append("<h2>Proposed diff</h2>")
-    h.append(_diff_html(diff) if diff else "<p class=muted>No patch was applied. The baseline is unchanged.</p>")
-
-    # Before / after
-    h.append("<h2>Fixed check: before and after</h2>")
-    if base_full and base_full.get("results"):
-        cand = {r["id"]: r for r in (cand_full or {}).get("results") or []}
-        rows = []
-        for r in base_full["results"]:
-            c = cand.get(r["id"])
-            changed = c is not None and (c.get("passed") != r["passed"] or c.get("actual") != r.get("actual"))
-            rows.append(f"<tr><td><b>{escape(r['id'])}</b>{' ' + _badge('target', 'info') if r['id'] in targets else ''}</td>"
-                        f"<td><code>{escape(json.dumps(r['args']))}</code></td><td>{escape(json.dumps(r['expected']))}</td>"
-                        f"<td>{_outcome(r)}</td><td>{_outcome(c)}</td><td>{'changed' if changed else 'same'}</td></tr>")
-        h.append("<div class=scroll><table><tr><th>Case</th><th>Args</th><th>Expected (frozen)</th><th>Baseline</th>"
-                 "<th>Candidate</th><th>Change</th></tr>" + "".join(rows) + "</table></div>")
-    if cand_full and cand_full.get("load_error"):
-        h.append(f"<div class=card>{_badge('candidate failed to load', 'bad')} {escape(json.dumps(cand_full['load_error']))}</div>")
-    h.append("<div class=card><b>Commands and raw output</b>")
-    check_dir = run_dir / "checks"
-    for pattern in ("*-full.json", "*-case-*.json"):
-        for path in sorted(check_dir.glob(pattern)):
-            h.append(_check_details(_load(run_dir, f"checks/{path.name}")))
-    h.append("</div>")
-
-    # Supplementary inputs
-    if extra and isinstance(extra.get("baseline"), list):
-        from .checks import grade_extra
-        base_obs = {o["id"]: o for o in extra["baseline"]}
-        cand_obs = {o["id"]: o for o in extra["candidate"]} if isinstance(extra.get("candidate"), list) else {}
-        rows = []
-        for case in extra["cases"]:
-            expected = ("raises " + case["expected_error"]) if "expected_error" in case else (
-                "ambiguous" if case.get("ambiguous") else json.dumps(case["expected"]))
-            cells = []
-            for obs in (base_obs.get(case["id"]), cand_obs.get(case["id"])):
-                if obs is None:
-                    cells.append('<span class=muted>—</span>')
-                    continue
-                text = f"raises {obs['error']}" if "error" in obs else json.dumps(obs["actual"])
-                grade = grade_extra(case, obs)
-                cells.append(escape(text) + " " + {"pass": _badge("pass", "ok"), "fail": _badge("fail", "bad"),
-                                                    "ungraded": _badge("ungraded", "warn")}[grade])
-            note = escape(case["rule"])
-            b, c = base_obs.get(case["id"]), cand_obs.get(case["id"])
-            if case.get("ambiguous") and b and c and b != c:
-                note = _badge("behaviour changed from baseline: reviewer decision needed", "warn") + " " + note
-            rows.append(f"<tr><td>{escape(case['id'])}</td><td><code>{escape(json.dumps(case['args']))}</code></td>"
-                        f"<td>{escape(expected)}</td><td>{cells[0]}</td><td>{cells[1]}</td><td class=muted>{note}</td></tr>")
-        h.append("<h2>Supplementary inputs (not part of the fixed check)</h2>")
-        h.append("<p class=muted>Handwritten additions from <code>fixtures/additions/extra-inputs.json</code>, verified independently "
-                 "by <code>scripts/verify_reference.py</code>. They inform the reviewer but do not decide the run status.</p>")
-        h.append("<div class=scroll><table><tr><th>Case</th><th>Args</th><th>Expected</th><th>Baseline</th><th>Candidate</th>"
-                 "<th>Rule</th></tr>" + "".join(rows) + "</table></div>")
-
-    # Untested / uncertain
-    h.append("<h2>What this run does not establish</h2><ul>")
-    n_ref = len((base_full or {}).get("results") or [])
-    h.append(f"<li>A passing status covers only the {n_ref} recorded reference cases"
-             + (f" and is accompanied by {len(extra['cases'])} supplementary inputs" if extra else "")
-             + ". It is not a proof of correctness for other inputs.</li>")
-    h.append("<li>The candidate ran in a subprocess with a timeout, not in a sandbox. The patch was screened for imports and "
-             "dynamic-execution builtins before running.</li>")
-    h.append("<li>The inferred cause is the model's interpretation. Only the observed failure and the test results are recorded facts.</li>")
-    if proposal and proposal["untested_risks"]:
-        h.append("<li>Model-reported risks (not verified by this tool):<ul>"
-                 + "".join(f"<li>{escape(r)}</li>" for r in proposal["untested_risks"]) + "</ul></li>")
-    h.append("</ul>")
-
-    # Provenance
-    h.append("<h2>Provenance and reproduction</h2><div class=card>")
-    prov = meta.get("provenance", {})
-    resp = _load(run_dir, "model/response.json")
-    usage = (resp or {}).get("response", {}).get("usage")
-    h.append(f"<p>{_provenance(meta)}</p><pre>{escape(json.dumps({'settings': meta.get('settings'), 'provenance': prov, 'usage': usage}, indent=2))}</pre>")
-    if recheck:
-        ok = all(recheck.get(k, {}).get("reproduced", True) for k in ("baseline", "candidate"))
-        h.append(f"<p>{_badge('re-checked offline', 'ok' if ok else 'bad')} at {escape(recheck['checked_at'])}: saved test "
-                 f"results {'reproduced exactly' if ok else 'DID NOT reproduce'} when the fixed check was rerun on the saved candidate.</p>")
-    h.append(f"<p class=muted>Artifacts in <code>runs/{escape(meta.get('run_id', ''))}/</code>: "
-             + ", ".join(f"<code>{escape(a)}</code>" for a in meta.get("artifacts", [])) + "</p>")
-    h.append(f"<p class=muted>Replay without an API key: <code>python -m assistant replay runs/{escape(meta.get('run_id', ''))} --recheck</code></p></div>")
-    h.append("</main></body></html>")
-    return "\n".join(h)
+    d = load_run(run_dir)
+    head = (
+        "<!doctype html><html lang=en><head><meta charset=utf-8>"
+        "<meta name=viewport content='width=device-width,initial-scale=1'>"
+        f"<title>Incident review {escape(d.meta.get('run_id', ''))}</title><style>{CSS}</style></head><body><main>"
+    )
+    return "\n".join([head, *(section(d) for section in SECTIONS), "</main></body></html>"])
 
 
 def write_report(run_dir):

@@ -2,6 +2,7 @@
 
 Findings have a level: "error" makes the run fail; "warning" is shown to the reviewer.
 """
+
 import ast
 import difflib
 import json
@@ -113,24 +114,49 @@ def check_diagnosis(proposal, incident, all_event_ids, module_text):
         if event_id not in all_event_ids:
             findings.append(finding("error", "unknown_event", f"Cited event {event_id} does not exist."))
         elif event_id not in incident.event_ids:
-            findings.append(finding("error", "unrelated_event_cited",
-                                    f"Cited event {event_id} records a different failure than {incident.id}."))
+            findings.append(
+                finding(
+                    "error",
+                    "unrelated_event_cited",
+                    f"Cited event {event_id} records a different failure than {incident.id}.",
+                )
+            )
     missing = [e for e in incident.event_ids if e not in cited]
     if missing:
-        findings.append(finding("warning", "evidence_not_cited",
-                                f"Events with the same failure signature were not cited: {', '.join(missing)}."))
+        findings.append(
+            finding(
+                "warning",
+                "evidence_not_cited",
+                f"Events with the same failure signature were not cited: {', '.join(missing)}.",
+            )
+        )
 
     location = proposal["source_location"]
     line_count = len(module_text.splitlines())
     if location["file"] != incident.module:
-        findings.append(finding("error", "wrong_file",
-                                f"Diagnosis points at {location['file']}, but the events report {incident.module}."))
+        findings.append(
+            finding(
+                "error",
+                "wrong_file",
+                f"Diagnosis points at {location['file']}, but the events report {incident.module}.",
+            )
+        )
     elif not 1 <= location["line"] <= line_count:
-        findings.append(finding("error", "line_out_of_range",
-                                f"Line {location['line']} does not exist ({incident.module} has {line_count} lines)."))
+        findings.append(
+            finding(
+                "error",
+                "line_out_of_range",
+                f"Line {location['line']} does not exist ({incident.module} has {line_count} lines).",
+            )
+        )
     elif location["line"] != incident.line:
-        findings.append(finding("warning", "line_differs",
-                                f"Diagnosis cites line {location['line']}; the events report line {incident.line}."))
+        findings.append(
+            finding(
+                "warning",
+                "line_differs",
+                f"Diagnosis cites line {location['line']}; the events report line {incident.line}.",
+            )
+        )
     return findings
 
 
@@ -155,8 +181,9 @@ def apply_patch(proposal, incident, original_text):
     patch = proposal["patch"]
     target = patch["file"]
     if target != incident.module or target in config.PROTECTED_FILES:
-        return None, [finding("error", "patch_outside_module",
-                              f"Patch targets {target}; only {incident.module} may change.")]
+        return None, [
+            finding("error", "patch_outside_module", f"Patch targets {target}; only {incident.module} may change.")
+        ]
     if not patch["edits"]:
         return None, [finding("error", "empty_patch", "The proposal contains no edits.")]
 
@@ -177,20 +204,28 @@ def apply_patch(proposal, incident, original_text):
 
     unsafe = _unsafe_constructs(new_tree) - _unsafe_constructs(ast.parse(original_text))
     if unsafe:
-        return None, [finding("error", "unsafe_construct",
-                              f"Patch introduces {', '.join(sorted(unsafe))}; it was not executed.")]
+        return None, [
+            finding("error", "unsafe_construct", f"Patch introduces {', '.join(sorted(unsafe))}; it was not executed.")
+        ]
 
     findings = []
     old_sig = _signature(ast.parse(original_text), incident.function)
     new_sig = _signature(new_tree, incident.function)
     if new_sig != old_sig:
-        findings.append(finding("error", "interface_changed",
-                                f"Signature of {incident.function} changed from {old_sig} to {new_sig}."))
-    changed = sum(1 for line in diff_lines(original_text, text, target)
-                  if line[:1] in "+-" and line[:3] not in ("+++", "---"))
+        findings.append(
+            finding(
+                "error", "interface_changed", f"Signature of {incident.function} changed from {old_sig} to {new_sig}."
+            )
+        )
+    changed = sum(
+        1 for line in diff_lines(original_text, text, target) if line[:1] in "+-" and line[:3] not in ("+++", "---")
+    )
     if changed > MAX_CHANGED_LINES:
-        findings.append(finding("warning", "large_patch",
-                                f"{changed} changed lines; expected a minimal fix (≤ {MAX_CHANGED_LINES})."))
+        findings.append(
+            finding(
+                "warning", "large_patch", f"{changed} changed lines; expected a minimal fix (≤ {MAX_CHANGED_LINES})."
+            )
+        )
     return text, findings
 
 
@@ -229,8 +264,12 @@ def _signature(tree, name):
     for node in ast.walk(tree):
         if isinstance(node, ast.FunctionDef) and node.name == name:
             args = node.args
-            return {"args": [a.arg for a in args.args], "defaults": len(args.defaults),
-                    "vararg": bool(args.vararg), "kwarg": bool(args.kwarg)}
+            return {
+                "args": [a.arg for a in args.args],
+                "defaults": len(args.defaults),
+                "vararg": bool(args.vararg),
+                "kwarg": bool(args.kwarg),
+            }
     return None
 
 
@@ -246,5 +285,8 @@ def diff_lines(old, new, name):
     :returns: Diff lines, each keeping its line ending.
     :rtype: list[str]
     """
-    return list(difflib.unified_diff(old.splitlines(keepends=True), new.splitlines(keepends=True),
-                                     fromfile=f"a/{name}", tofile=f"b/{name}"))
+    return list(
+        difflib.unified_diff(
+            old.splitlines(keepends=True), new.splitlines(keepends=True), fromfile=f"a/{name}", tofile=f"b/{name}"
+        )
+    )

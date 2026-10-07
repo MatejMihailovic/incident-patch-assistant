@@ -1,15 +1,32 @@
 """Command line: list incidents, run the assistant, replay a saved run, or run the demonstration set."""
+
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
+
+from loguru import logger
 
 from . import config, demo, evidence, pipeline
 from .report import write_report
 
+CONSOLE_FORMAT = "<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | {message}"
+
+
+def configure_logging(*, verbose=False):
+    """Send log records to stderr; per-run ``run.log`` files are added by :class:`assistant.pipeline.Run`.
+
+    :param verbose: Show DEBUG records. Otherwise the level comes from ``INCIDENT_LOG_LEVEL`` (default ``INFO``).
+    :type verbose: bool
+    """
+    logger.remove()
+    level = "DEBUG" if verbose else os.environ.get("INCIDENT_LOG_LEVEL", "INFO")
+    logger.add(sys.stderr, level=level, format=CONSOLE_FORMAT)
+
 
 def cmd_incidents(_args):
-    """Print incidents grouped from the recorded events, then any malformed events.
+    """Log incidents grouped from the recorded events, then any malformed events.
 
     :param _args: Parsed arguments (unused).
     :type _args: argparse.Namespace
@@ -18,14 +35,16 @@ def cmd_incidents(_args):
     """
     events, malformed = evidence.load_events()
     for inc in evidence.group_incidents(events):
-        print(f"{inc.id}: {inc.function} raised {inc.error} at {inc.source}  events={','.join(inc.event_ids)}")
+        logger.info(
+            "{}: {} raised {} at {}  events={}", inc.id, inc.function, inc.error, inc.source, ",".join(inc.event_ids)
+        )
     for m in malformed:
-        print(f"MALFORMED {m.get('event_id')} in {m['file']}: {m['problem']}")
+        logger.warning("Malformed {} in {}: {}", m.get("event_id"), m["file"], m["problem"])
     return 0
 
 
 def _summary(run_dir):
-    """Print a run's status, reasons and report path.
+    """Log a run's status, reasons and report path.
 
     :param run_dir: Run directory.
     :type run_dir: pathlib.Path or str
@@ -34,10 +53,11 @@ def _summary(run_dir):
     """
     meta = json.loads((Path(run_dir) / "run.json").read_text())
     source = (meta.get("provenance") or {}).get("source", "none")
-    print(f"{meta['status'].upper():8} {meta['run_id']}  (model response: {source})")
+    log = logger.success if meta["status"] == "checked" else logger.error
+    log("{} {} (model response: {})", meta["status"].upper(), meta["run_id"], source)
     for reason in meta["status_reasons"]:
-        print(f"         - {reason}")
-    print(f"         report: {Path(run_dir) / 'report.html'}")
+        logger.info("  - {}", reason)
+    logger.info("  report: {}", Path(run_dir) / "report.html")
     return meta
 
 
@@ -64,14 +84,10 @@ def cmd_replay(args):
     """
     run_dir = Path(args.run_dir)
     if not (run_dir / "run.json").exists():
-        print(f"not a run directory: {run_dir}", file=sys.stderr)
+        logger.error("Not a run directory: {}", run_dir)
         return 2
     if args.recheck:
-        comparison = pipeline.recheck(run_dir)
-        for label in ("baseline", "candidate"):
-            c = comparison[label]
-            state = "not available" if not c["available"] else "reproduced" if c["reproduced"] else "DIFFERENT"
-            print(f"recheck {label:9}: {state}")
+        pipeline.recheck(run_dir)
     write_report(run_dir)
     _summary(run_dir)
     return 0
@@ -91,21 +107,22 @@ def cmd_demo(args):
     try:
         scenarios = demo.run_scenarios(args.event, live=args.live)
     except RuntimeError as exc:
-        print(exc, file=sys.stderr)
+        logger.error("{}", exc)
         return 2
     for run_dir in [scenarios["real"], *scenarios["simulated"]]:
         _summary(run_dir)
     rows = demo.grade(scenarios)
     path = demo.write_results(rows, scenarios, args.out)
-    print()
     for n, row in enumerate(rows, start=1):
-        print(f"check {n}: {'PASS' if row['passed'] else 'FAIL'}  {row['check']}")
-    print(f"\n{sum(r['passed'] for r in rows)}/{len(rows)} checks passed; table written to {path}")
+        (logger.success if row["passed"] else logger.error)(
+            "Check {}: {}  {}", n, "PASS" if row["passed"] else "FAIL", row["check"]
+        )
+    logger.info("{}/{} checks passed; table written to {}", sum(r["passed"] for r in rows), len(rows), path)
     return 0 if all(r["passed"] for r in rows) else 1
 
 
 def main(argv=None):
-    """Parse arguments and dispatch to a subcommand.
+    """Parse arguments, configure logging, and dispatch to a subcommand.
 
     :param argv: Arguments without the program name; defaults to ``sys.argv[1:]``.
     :type argv: list[str] or None
@@ -113,21 +130,25 @@ def main(argv=None):
     :rtype: int
     """
     parser = argparse.ArgumentParser(prog="python -m assistant", description=__doc__)
+    parser.add_argument("-v", "--verbose", action="store_true", help="show debug log records")
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("incidents", help="list incidents grouped from the recorded events").set_defaults(func=cmd_incidents)
 
     run = sub.add_parser("run", help="diagnose an incident, propose a patch, check it, write a report")
     run.add_argument("--event", default="EV1", help="event ID that selects the incident (default: EV1)")
-    run.add_argument("--response-file", type=Path,
-                     help="use a saved or simulated model response instead of calling the API")
+    run.add_argument(
+        "--response-file", type=Path, help="use a saved or simulated model response instead of calling the API"
+    )
     run.add_argument("--model", help=f"model ID (default: {config.MODEL})")
-    run.add_argument("--effort", choices=["low", "medium", "high", "xhigh", "max"], help=f"effort (default: {config.EFFORT})")
+    run.add_argument(
+        "--effort", choices=["low", "medium", "high", "xhigh", "max"], help=f"effort (default: {config.EFFORT})"
+    )
     run.set_defaults(func=cmd_run)
 
     replay = sub.add_parser("replay", help="regenerate a saved run's report without calling the model")
     replay.add_argument("run_dir", type=Path)
-    replay.add_argument("--recheck", action="store_true", help="rerun the fixed check on the saved candidate and compare")
+    replay.add_argument("--recheck", action="store_true", help="rerun the fixed check on the saved run and compare")
     replay.set_defaults(func=cmd_replay)
 
     demo_cmd = sub.add_parser("demo", help="run the minimum demonstration set and write RESULTS.md")
@@ -137,4 +158,5 @@ def main(argv=None):
     demo_cmd.set_defaults(func=cmd_demo)
 
     args = parser.parse_args(argv)
+    configure_logging(verbose=args.verbose)
     return args.func(args)

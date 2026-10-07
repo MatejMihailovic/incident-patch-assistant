@@ -1,4 +1,5 @@
 """Load error events, report malformed ones, and group events into incidents."""
+
 import json
 import re
 from dataclasses import asdict, dataclass, field
@@ -29,6 +30,7 @@ class Incident:
     :param event_ids: IDs of every event with this signature, in load order.
     :type event_ids: list[str]
     """
+
     id: str
     function: str
     error: str
@@ -71,8 +73,8 @@ def load_events(paths=None):
     :rtype: tuple[list[dict], list[dict]]
     """
     events, problems, seen = [], [], set()
-    for path in paths or config.EVENT_FILES:
-        path = Path(path)
+    for raw_path in paths or config.EVENT_FILES:
+        path = Path(raw_path)
         origin = _relative(path)
         if not path.exists():
             problems.append({"file": origin, "event_id": None, "problem": "event file not found"})
@@ -108,8 +110,9 @@ def _event_issues(item):
     """
     if not isinstance(item, dict):
         return ["event is not an object"]
-    issues = [f"missing or invalid '{name}'" for name, kind in REQUIRED_FIELDS.items()
-              if not isinstance(item.get(name), kind)]
+    issues = [
+        f"missing or invalid '{name}'" for name, kind in REQUIRED_FIELDS.items() if not isinstance(item.get(name), kind)
+    ]
     if isinstance(item.get("source"), str) and not SOURCE_PATTERN.match(item["source"]):
         issues.append("source is not in file:line form")
     return issues
@@ -132,8 +135,13 @@ def group_incidents(events):
         if key not in incidents:
             match = SOURCE_PATTERN.match(event["source"])
             incidents[key] = Incident(
-                id=f"INC-{event['event_id']}", function=event["function"], error=event["error"],
-                source=event["source"], module=match["file"], line=int(match["line"]))
+                id=f"INC-{event['event_id']}",
+                function=event["function"],
+                error=event["error"],
+                source=event["source"],
+                module=match["file"],
+                line=int(match["line"]),
+            )
         incidents[key].event_ids.append(event["event_id"])
     return list(incidents.values())
 

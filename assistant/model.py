@@ -4,9 +4,12 @@ Every response record carries provenance: "live" (a real call made in this run),
 "replay" (a saved real response reused without a call), or "simulated" (a
 handwritten negative-control fixture).
 """
+
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+
+import anthropic
 
 from . import config
 from .evidence import numbered
@@ -53,8 +56,17 @@ PROPOSAL_SCHEMA = {
         "patch_rationale": {"type": "string"},
         "untested_risks": {"type": "array", "items": {"type": "string"}},
     },
-    "required": ["relevant_event_ids", "excluded_events", "observed_failure", "source_location",
-                 "inferred_cause", "confidence", "patch", "patch_rationale", "untested_risks"],
+    "required": [
+        "relevant_event_ids",
+        "excluded_events",
+        "observed_failure",
+        "source_location",
+        "inferred_cause",
+        "confidence",
+        "patch",
+        "patch_rationale",
+        "untested_risks",
+    ],
     "additionalProperties": False,
 }
 
@@ -83,7 +95,7 @@ def _now():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def build_request(selected_event_id, events, malformed, files, model, effort):
+def build_request(selected_event_id, events, malformed, files, *, model, effort):
     """Build the exact Messages API parameters for one diagnosis request.
 
     Repository content is wrapped in XML-style tags so the system prompt can tell the
@@ -109,17 +121,17 @@ def build_request(selected_event_id, events, malformed, files, model, effort):
     public_events = [{k: v for k, v in e.items() if not k.startswith("_")} for e in events]
     parts = [
         f"<task>The developer selected event {selected_event_id}. Diagnose that failure and propose a patch.</task>",
-        f"<domain_rules path=\"domain.md\">\n{files['domain.md']}\n</domain_rules>",
+        f'<domain_rules path="domain.md">\n{files["domain.md"]}\n</domain_rules>',
         f"<events>\n{json.dumps(public_events, indent=2)}\n</events>",
-        f"<malformed_events note=\"rejected by the loader; not usable as evidence\">\n{json.dumps(malformed, indent=2)}\n</malformed_events>",
+        f'<malformed_events note="rejected by the loader; not usable as evidence">\n{json.dumps(malformed, indent=2)}\n</malformed_events>',
     ]
     for name, text in files.items():
         if name == "domain.md":
             continue
         if name.endswith(".py"):
-            parts.append(f"<file path=\"{name}\" numbered=\"true\">\n{numbered(text)}\n</file>")
+            parts.append(f'<file path="{name}" numbered="true">\n{numbered(text)}\n</file>')
         else:
-            parts.append(f"<file path=\"{name}\">\n{text}\n</file>")
+            parts.append(f'<file path="{name}">\n{text}\n</file>')
     request = {
         "model": model,
         "max_tokens": config.MAX_TOKENS,
@@ -147,8 +159,6 @@ def call_model(request):
     :raises ModelError: On authentication, rate-limit, bad-request, server, connection or
         client-configuration errors (for example, no credentials).
     """
-    import anthropic
-
     try:
         client = anthropic.Anthropic(timeout=config.API_TIMEOUT_S)
         api = client.beta.messages if "betas" in request else client.messages
@@ -166,19 +176,18 @@ def call_model(request):
     except anthropic.AnthropicError as exc:  # e.g. no credentials configured
         raise ModelError("client_error", str(exc)) from exc
 
-    record = {
+    return {
         "provenance": {
             "source": "live",
             "requested_model": request["model"],
             "served_model": message.model,
-            "request_id": message._request_id,
+            "request_id": message._request_id,  # noqa: SLF001 - documented public accessor in the SDK
             "received_at": _now(),
             "effort": request["output_config"]["effort"],
             "fallbacks": request.get("fallbacks"),
         },
         "response": message.to_dict(),
     }
-    return record
 
 
 def load_response_file(path):
@@ -205,7 +214,12 @@ def load_response_file(path):
         raise ModelError("invalid_response_file", f"not a saved response record: {exc}") from exc
     if source in ("live", "replay"):
         original = record["provenance"].get("original", record["provenance"])
-        record["provenance"] = {"source": "replay", "replayed_from": str(path), "replayed_at": _now(), "original": original}
+        record["provenance"] = {
+            "source": "replay",
+            "replayed_from": str(path),
+            "replayed_at": _now(),
+            "original": original,
+        }
     return record
 
 

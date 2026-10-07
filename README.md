@@ -12,9 +12,9 @@ Requires Python 3.10+. It was developed with 3.12.10 on Linux.
 
 ```bash
 python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
-.venv/bin/python -m pytest -q                # 26 tests, no API calls
-python3 scripts/verify_reference.py          # recompute expected values from the rules
+.venv/bin/pip install -r requirements-dev.txt   # or requirements.txt to run the app only
+.venv/bin/python -m pytest -q                   # 26 tests, no API calls
+python3 scripts/verify_reference.py             # recompute expected values from the rules
 ```
 
 ### Reproduce the demonstration without an API key
@@ -50,6 +50,33 @@ The run folder name, status and report path are printed. The exit code is `0` on
 | `python -m assistant run --event EV1 --response-file PATH` | Same pipeline using a saved or simulated response, with no API call |
 | `python -m assistant replay RUN_DIR [--recheck]` | Rebuild a report offline; `--recheck` reruns the fixed check and compares the results |
 | `python -m assistant demo [--live]` | Minimum demonstration plus `RESULTS.md` |
+
+Add `-v` before the subcommand (`python -m assistant -v run ...`) for DEBUG output, or set `INCIDENT_LOG_LEVEL`.
+
+### Logging
+
+The CLI logs to stderr with [loguru](https://github.com/Delgan/loguru): one line per pipeline stage, warnings for malformed events and proposal findings, and the final status. While a run is open, the same records, plus DEBUG lines such as the frozen-hash checks, are written with full timestamps to that run's `run.log`. A reviewer can then follow exactly what happened in each saved run.
+
+### Development checks
+
+```bash
+.venv/bin/pre-commit install            # once; then the hooks run on every commit
+.venv/bin/pre-commit run --all-files
+```
+
+| Hook | Purpose |
+|---|---|
+| `ruff-check` (with `--fix`), `ruff-format` | Lint and format, configured in `pyproject.toml`. The rule set includes bugbear, pylint, bandit security checks, complexity ≤ 12, and no `print` in the app. |
+| `pydoclint` (Sphinx style) | Docstring parameters, returns and raises must match the signatures |
+| `no-anthropic-keys` | Blocks any `sk-ant-…` string, including inside saved `runs/` responses |
+| `frozen-fixtures` | Fails if a frozen starter file no longer matches its hash |
+| `verify-reference` | Expected values still agree with the domain rules |
+| `pytest` | The full suite, in its own environment with pinned dependencies |
+| `pre-commit-hooks` | Whitespace and end-of-file fixes, JSON/TOML/YAML validity, merge conflicts, large files, private keys |
+
+`fixtures/incidents/` and `runs/` are excluded from every hook that can modify files. Reformatting a frozen file would break its hash, and reformatting a saved `candidate.py` would alter evidence. The secret scan still covers them.
+
+Lint decisions: type annotations (`ANN`) are not enforced, because the Sphinx docstrings carry the types. `E501` is left to the formatter. `PLR0911` is off because the validators use guard-clause returns. Each `noqa` in the code states its reason.
 
 The fixed check command can always be run by hand. From `fixtures/incidents/`:
 
@@ -90,6 +117,7 @@ baseline.py, check.py, reference-cases.json, domain.md ──► read at runtime
 | [`assistant/pipeline.py`](assistant/pipeline.py) | Orchestrate one run and save every artifact as soon as it exists; offline recheck |
 | [`assistant/report.py`](assistant/report.py) | Self-contained HTML report built only from a run's saved files |
 | [`assistant/demo.py`](assistant/demo.py) | Minimum demonstration and grading of the five checks |
+| [`assistant/cli.py`](assistant/cli.py) | Argument parsing and logging setup |
 
 ### What the model decides vs. what the code verifies
 
@@ -124,6 +152,7 @@ Each run writes `runs/<UTC time>-<event>-<live|replay|sim-name>/`:
 | `checks/*.json` | Every check invocation: command, exit code, stdout, stderr, duration |
 | `checks/extra-inputs.json` | Supplementary inputs on the baseline and the candidate |
 | `report.html` | The review report |
+| `run.log` | Timestamped log of the run (runs made after logging was added) |
 
 ## Model configuration
 
@@ -195,10 +224,14 @@ fixtures/incidents/   frozen starter files (never modified)
 fixtures/additions/   handwritten extra events and supplementary inputs
 fixtures/simulated/   labelled simulated responses (negative controls)
 fixtures/baseline-results/  fixed-check output on the baseline, saved before any model call
-scripts/verify_reference.py independent expectation check
+scripts/verify_reference.py independent expectation check (stdlib only)
+scripts/check_frozen.py     frozen-hash check used by pre-commit (stdlib only)
 runs/                 saved runs: live, replays, negative controls
 tests/                pytest suite (no network)
 RESULTS.md            minimum-demonstration results table (generated)
 ai-workflow/          AI tooling configuration and manifest
 CLAUDE.md             project instructions for the coding agent
+pyproject.toml        ruff, pytest and pydoclint configuration
+.pre-commit-config.yaml  commit hooks
+requirements*.txt     pinned runtime and development dependencies
 ```

@@ -1,4 +1,5 @@
 """Verify that the frozen baseline, check script and answer key are byte-identical to the starter pack."""
+
 import hashlib
 import json
 

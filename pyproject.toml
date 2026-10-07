@@ -1,0 +1,56 @@
+[project]
+name = "incident-patch-assistant"
+version = "0.1.0"
+description = "Diagnose a recorded failure with Claude, test the proposed patch on a copy, and write a review package."
+requires-python = ">=3.10"
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+# Frozen starter files must stay byte-identical (hashes in fixtures/frozen.json), and runs/ holds
+# recorded evidence, including model-written candidate.py files, so neither may be linted or reformatted.
+extend-exclude = ["fixtures/incidents", "runs"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W", "F",  # pycodestyle, pyflakes
+    "I",            # import order
+    "B",            # bugbear
+    "UP",           # pyupgrade
+    "SIM", "RET", "PIE", "PERF",
+    "RUF",
+    "PL",           # pylint
+    "C90",          # complexity
+    "S",            # bandit security checks
+    "PT",           # pytest style
+    "T20",          # no print(): use loguru
+    "BLE", "FBT", "ISC", "SLF",
+]
+ignore = [
+    "PLR0911",  # validation functions use guard-clause returns on purpose
+    "E501",     # `ruff format` wraps code at 120; long strings and docstrings are allowed
+]
+
+[tool.ruff.lint.pylint]
+max-args = 6
+
+[tool.ruff.lint.mccabe]
+max-complexity = 12
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "PLR2004"]
+# Stdlib-only scripts that run with plain `python3` (and as pre-commit hooks); their printed table is their output.
+"scripts/*" = ["T201"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.pydoclint]
+style = "sphinx"
+exclude = "fixtures|runs|tests|\\.venv"
+arg-type-hints-in-signature = false
+arg-type-hints-in-docstring = true
+check-return-types = false
+skip-checking-short-docstrings = false
+check-class-attributes = false  # dataclass fields are documented as constructor :param: entries

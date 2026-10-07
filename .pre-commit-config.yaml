@@ -1,0 +1,62 @@
+# Install once: .venv/bin/pre-commit install      Run on everything: .venv/bin/pre-commit run --all-files
+#
+# fixtures/incidents/ is frozen (hashes in fixtures/frozen.json) and runs/ holds recorded evidence,
+# including model-written candidate.py files, so no hook may modify them. The secret scan still covers both.
+default_install_hook_types: [pre-commit]
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: ^(fixtures/incidents|runs)/
+      - id: end-of-file-fixer
+        exclude: ^(fixtures/incidents|runs)/
+      - id: mixed-line-ending
+        exclude: ^(fixtures/incidents|runs)/
+      - id: check-json
+      - id: check-toml
+      - id: check-yaml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=500]
+      - id: detect-private-key
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.10
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: https://github.com/jsh9/pydoclint
+    rev: 0.11.0
+    hooks:
+      - id: pydoclint
+        args: [--config=pyproject.toml]
+
+  - repo: local
+    hooks:
+      - id: no-anthropic-keys
+        name: block Anthropic API keys (including in saved runs)
+        language: pygrep
+        entry: 'sk-ant-[A-Za-z0-9_-]{16,}'
+      - id: frozen-fixtures
+        name: frozen starter files match their hashes
+        language: python
+        entry: python scripts/check_frozen.py
+        pass_filenames: false
+        always_run: true
+      - id: verify-reference
+        name: expected values agree with the domain rules
+        language: python
+        entry: python scripts/verify_reference.py
+        files: ^(fixtures/|scripts/verify_reference\.py)
+        pass_filenames: false
+      - id: pytest
+        name: pytest (no API calls)
+        language: python
+        entry: python -m pytest -q
+        additional_dependencies: [anthropic==1.11.0, loguru==0.7.3, pytest==9.1.1]
+        files: ^(assistant|tests|fixtures|prompts)/|^pyproject\.toml$
+        pass_filenames: false

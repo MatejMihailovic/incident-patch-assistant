@@ -4,11 +4,13 @@ TEST_DOUBLE_FIX below is a handwritten correct patch used only to exercise the
 "checked" path of the pipeline. The application never sees it; real proposals
 come from the model at runtime.
 """
+
 import json
 
 import pytest
 
-from assistant import config, evidence, integrity, model, pipeline, proposal as proposals
+from assistant import config, demo, evidence, integrity, model, pipeline
+from assistant import proposal as proposals
 
 TEST_DOUBLE_FIX = {
     "find": "    return (2 * total_cents + quantity) // (2 * quantity)",
@@ -35,9 +37,18 @@ def make_proposal(**overrides):
 def write_response(tmp_path, proposal_obj, source="simulated"):
     path = tmp_path / "responses" / "response.json"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"provenance": {"source": source, "description": "test double"},
-                                "response": {"model": "test", "stop_reason": "end_turn",
-                                             "content": [{"type": "text", "text": json.dumps(proposal_obj)}]}}))
+    path.write_text(
+        json.dumps(
+            {
+                "provenance": {"source": source, "description": "test double"},
+                "response": {
+                    "model": "test",
+                    "stop_reason": "end_turn",
+                    "content": [{"type": "text", "text": json.dumps(proposal_obj)}],
+                },
+            }
+        )
+    )
     return path
 
 
@@ -53,6 +64,7 @@ def baseline_text():
 
 
 # Evidence ---------------------------------------------------------------------------------------
+
 
 def test_events_grouped_by_failure_signature():
     events, malformed = evidence.load_events()
@@ -71,6 +83,7 @@ def test_missing_and_invalid_event_files_are_reported(tmp_path):
 
 # Proposal validation ------------------------------------------------------------------------------
 
+
 def test_parse_rejects_non_json_and_schema_violations():
     with pytest.raises(proposals.ProposalError, match="not valid JSON"):
         proposals.parse_proposal("Sure! Here is the fix:")
@@ -82,7 +95,9 @@ def test_parse_rejects_non_json_and_schema_violations():
 
 def test_citing_unrelated_or_unknown_event_is_an_error(incident, baseline_text):
     ids = {"EV1", "EV2", "EV3", "EV4"}
-    findings = proposals.check_diagnosis(make_proposal(relevant_event_ids=["EV1", "EV3", "EV9"]), incident, ids, baseline_text)
+    findings = proposals.check_diagnosis(
+        make_proposal(relevant_event_ids=["EV1", "EV3", "EV9"]), incident, ids, baseline_text
+    )
     codes = {f["code"]: f["level"] for f in findings}
     assert codes["unrelated_event_cited"] == "error"
     assert codes["unknown_event"] == "error"
@@ -90,20 +105,30 @@ def test_citing_unrelated_or_unknown_event_is_an_error(incident, baseline_text):
 
 
 def test_cited_line_must_exist(incident, baseline_text):
-    findings = proposals.check_diagnosis(make_proposal(source_location={"file": "baseline.py", "line": 40}),
-                                         incident, {"EV1", "EV2", "EV4"}, baseline_text)
+    findings = proposals.check_diagnosis(
+        make_proposal(source_location={"file": "baseline.py", "line": 40}),
+        incident,
+        {"EV1", "EV2", "EV4"},
+        baseline_text,
+    )
     assert [f["code"] for f in findings] == ["line_out_of_range"]
 
 
-@pytest.mark.parametrize("patch, code", [
-    ({"file": "check.py", "edits": [TEST_DOUBLE_FIX]}, "patch_outside_module"),
-    ({"file": "reference-cases.json", "edits": [TEST_DOUBLE_FIX]}, "patch_outside_module"),
-    ({"file": "baseline.py", "edits": []}, "empty_patch"),
-    ({"file": "baseline.py", "edits": [{"find": "return 1", "replace": "return 0"}]}, "edit_does_not_apply"),
-    ({"file": "baseline.py", "edits": [{"find": "quantity", "replace": "qty"}]}, "edit_does_not_apply"),
-    ({"file": "baseline.py", "edits": [{"find": "    return (2", "replace": "    return ((2"}]}, "syntax_error"),
-    ({"file": "baseline.py", "edits": [{"find": "def unit_price", "replace": "import os\ndef unit_price"}]}, "unsafe_construct"),
-])
+@pytest.mark.parametrize(
+    ("patch", "code"),
+    [
+        ({"file": "check.py", "edits": [TEST_DOUBLE_FIX]}, "patch_outside_module"),
+        ({"file": "reference-cases.json", "edits": [TEST_DOUBLE_FIX]}, "patch_outside_module"),
+        ({"file": "baseline.py", "edits": []}, "empty_patch"),
+        ({"file": "baseline.py", "edits": [{"find": "return 1", "replace": "return 0"}]}, "edit_does_not_apply"),
+        ({"file": "baseline.py", "edits": [{"find": "quantity", "replace": "qty"}]}, "edit_does_not_apply"),
+        ({"file": "baseline.py", "edits": [{"find": "    return (2", "replace": "    return ((2"}]}, "syntax_error"),
+        (
+            {"file": "baseline.py", "edits": [{"find": "def unit_price", "replace": "import os\ndef unit_price"}]},
+            "unsafe_construct",
+        ),
+    ],
+)
 def test_bad_patches_are_rejected_without_a_candidate(incident, baseline_text, patch, code):
     candidate, findings = proposals.apply_patch(make_proposal(patch=patch), incident, baseline_text)
     assert candidate is None
@@ -111,8 +136,15 @@ def test_bad_patches_are_rejected_without_a_candidate(incident, baseline_text, p
 
 
 def test_interface_change_is_an_error(incident, baseline_text):
-    patch = {"file": "baseline.py", "edits": [{"find": "def unit_price(total_cents, quantity):",
-                                               "replace": "def unit_price(total_cents, quantity, strict=False):"}]}
+    patch = {
+        "file": "baseline.py",
+        "edits": [
+            {
+                "find": "def unit_price(total_cents, quantity):",
+                "replace": "def unit_price(total_cents, quantity, strict=False):",
+            }
+        ],
+    }
     _, findings = proposals.apply_patch(make_proposal(patch=patch), incident, baseline_text)
     assert [f["code"] for f in findings] == ["interface_changed"]
 
@@ -126,21 +158,27 @@ def test_valid_patch_applies_only_to_a_copy(incident, baseline_text):
 
 # Pipeline end to end (no network) ---------------------------------------------------------------
 
+
 def load_meta(run_dir):
     return json.loads((run_dir / "run.json").read_text())
 
 
 def test_correct_patch_is_checked_and_baseline_untouched(tmp_path):
     before = integrity.verify_frozen()
-    run_dir = pipeline.execute("EV1", response_file=write_response(tmp_path, make_proposal()), runs_dir=tmp_path / "runs")
+    run_dir = pipeline.execute(
+        "EV1", response_file=write_response(tmp_path, make_proposal()), runs_dir=tmp_path / "runs"
+    )
     meta = load_meta(run_dir)
     assert meta["status"] == "checked", meta["status_reasons"]
     assert meta["target_cases"] == ["zero-quantity"]
     base = json.loads((run_dir / "checks/baseline-case-zero-quantity.json").read_text())
     cand = json.loads((run_dir / "checks/candidate-case-zero-quantity.json").read_text())
-    assert base["results"][0]["error"] == "ZeroDivisionError" and cand["results"][0]["passed"]
-    assert integrity.verify_frozen() == before and before["ok"]
-    assert (run_dir / "report.html").exists() and (run_dir / "patch.diff").read_text().startswith("--- a/baseline.py")
+    assert base["results"][0]["error"] == "ZeroDivisionError"
+    assert cand["results"][0]["passed"]
+    assert integrity.verify_frozen() == before
+    assert before["ok"]
+    assert (run_dir / "report.html").exists()
+    assert (run_dir / "patch.diff").read_text().startswith("--- a/baseline.py")
 
 
 def test_unrelated_evidence_fails_even_when_tests_pass(tmp_path):
@@ -150,13 +188,19 @@ def test_unrelated_evidence_fails_even_when_tests_pass(tmp_path):
     assert any("different failure" in r for r in meta["status_reasons"])
 
 
-@pytest.mark.parametrize("name, reason", [
-    ("patch-does-not-apply", "patch was rejected"),
-    ("patch-breaks-rounding", "Regression"),
-])
+@pytest.mark.parametrize(
+    ("name", "reason"),
+    [
+        ("patch-does-not-apply", "patch was rejected"),
+        ("patch-breaks-rounding", "Regression"),
+    ],
+)
 def test_simulated_negative_controls_fail(tmp_path, name, reason):
-    meta = load_meta(pipeline.execute("EV1", response_file=config.FIXTURES / "simulated" / f"{name}.json",
-                                      runs_dir=tmp_path / "runs"))
+    meta = load_meta(
+        pipeline.execute(
+            "EV1", response_file=config.FIXTURES / "simulated" / f"{name}.json", runs_dir=tmp_path / "runs"
+        )
+    )
     assert meta["status"] == "failed"
     assert meta["provenance"]["source"] == "simulated"
     assert any(reason in r for r in meta["status_reasons"])
@@ -166,15 +210,17 @@ def test_simulated_negative_controls_fail(tmp_path, name, reason):
 def test_model_unavailable_is_a_visible_failure(tmp_path, monkeypatch):
     def unavailable(_request):
         raise model.ModelError("unavailable", "cannot reach the API")
+
     monkeypatch.setattr(model, "call_model", unavailable)
     run_dir = pipeline.execute("EV1", runs_dir=tmp_path / "runs")
     meta = load_meta(run_dir)
-    assert meta["status"] == "failed" and "unavailable" in meta["status_reasons"][0]
+    assert meta["status"] == "failed"
+    assert "unavailable" in meta["status_reasons"][0]
     assert json.loads((run_dir / "model/error.json").read_text())["kind"] == "unavailable"
     assert not (run_dir / "candidate.py").exists()
 
 
-@pytest.mark.parametrize("stop_reason, kind", [("refusal", "refusal"), ("max_tokens", "truncated")])
+@pytest.mark.parametrize(("stop_reason", "kind"), [("refusal", "refusal"), ("max_tokens", "truncated")])
 def test_refusal_and_truncation_are_not_parsed(stop_reason, kind):
     with pytest.raises(model.ModelError) as exc:
         model.response_text({"response": {"stop_reason": stop_reason, "content": [{"type": "text", "text": "{"}]}})
@@ -183,16 +229,19 @@ def test_refusal_and_truncation_are_not_parsed(stop_reason, kind):
 
 def test_unknown_event_fails_cleanly(tmp_path):
     meta = load_meta(pipeline.execute("EV42", response_file=tmp_path / "unused.json", runs_dir=tmp_path / "runs"))
-    assert meta["status"] == "failed" and "EV42" in meta["status_reasons"][0]
+    assert meta["status"] == "failed"
+    assert "EV42" in meta["status_reasons"][0]
 
 
 def test_unreproduced_incident_stops_before_the_model(tmp_path, monkeypatch):
     def must_not_call(_request):
         raise AssertionError("model must not be called")
+
     monkeypatch.setattr(model, "call_model", must_not_call)
     run_dir = pipeline.execute("EV3", runs_dir=tmp_path / "runs")
     meta = load_meta(run_dir)
-    assert meta["status"] == "failed" and meta["target_cases"] == []
+    assert meta["status"] == "failed"
+    assert meta["target_cases"] == []
     assert "No reference case reproduces ValueError" in meta["status_reasons"][0]
 
 
@@ -202,13 +251,15 @@ def test_tampered_fixture_stops_the_run_before_the_model(tmp_path, monkeypatch):
     fake = tmp_path / "frozen.json"
     fake.write_text(json.dumps(manifest))
     monkeypatch.setattr(config, "FROZEN_MANIFEST", fake)
-    run_dir = pipeline.execute("EV1", response_file=write_response(tmp_path, make_proposal()), runs_dir=tmp_path / "runs")
+    run_dir = pipeline.execute(
+        "EV1", response_file=write_response(tmp_path, make_proposal()), runs_dir=tmp_path / "runs"
+    )
     assert load_meta(run_dir)["status"] == "failed"
     assert not (run_dir / "model").exists()
 
 
 def test_demo_grades_all_five_checks(tmp_path, monkeypatch):
-    from assistant import demo
+
     live_record = json.loads(write_response(tmp_path, make_proposal(), source="live").read_text())
     live_record["provenance"]["request_id"] = "req_test_double"
     monkeypatch.setattr(model, "call_model", lambda _request: live_record)
@@ -225,4 +276,5 @@ def test_saved_live_response_replays_and_rechecks(tmp_path):
     meta = load_meta(run_dir)
     assert meta["provenance"]["source"] == "replay"
     comparison = pipeline.recheck(run_dir)
-    assert comparison["baseline"]["reproduced"] and comparison["candidate"]["reproduced"]
+    assert comparison["baseline"]["reproduced"]
+    assert comparison["candidate"]["reproduced"]

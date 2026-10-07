@@ -4,6 +4,7 @@ Does not import baseline.py or any application code: the rules are re-derived
 here with Decimal half-up rounding, so a shared bug cannot hide in both places.
 Exit code 0 only if every committed expectation agrees with this derivation.
 """
+
 import json
 import sys
 from decimal import ROUND_HALF_UP, Decimal
@@ -45,7 +46,7 @@ def main():
     print(f"{'case':28} {'args':14} {'committed':>10} {'derived':>10}  result")
     for case in reference + extra:
         if case.get("ambiguous"):
-            print(f"{case['id']:28} {str(case['args']):14} {'-':>10} {'-':>10}  AMBIGUOUS (not graded)")
+            print(f"{case['id']:28} {case['args']!s:14} {'-':>10} {'-':>10}  AMBIGUOUS (not graded)")
             continue
         committed = case.get("expected", case.get("expected_error"))
         try:
@@ -54,7 +55,9 @@ def main():
             derived = "ValueError"
         agree = committed == derived
         ok &= agree
-        print(f"{case['id']:28} {str(case['args']):14} {str(committed):>10} {str(derived):>10}  {'agree' if agree else 'MISMATCH'}")
+        print(
+            f"{case['id']:28} {case['args']!s:14} {committed!s:>10} {derived!s:>10}  {'agree' if agree else 'MISMATCH'}"
+        )
     return 0 if ok else 1
 
 
