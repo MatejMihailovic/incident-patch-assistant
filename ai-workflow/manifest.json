@@ -1,0 +1,154 @@
+{
+  "template": false,
+  "exercise": "Junior AI Engineer take-home, Alternative E: Incident-to-patch (starter pack 2026-10-02)",
+  "categories": {
+    "development_tools_and_models": {
+      "status": "used",
+      "files": ["ai-workflow/snapshots/user-settings.json"],
+      "notes": "Claude Code VS Code extension (anthropic.claude-code 2.1.289 at the start, auto-updated to 2.1.292 during the exercise) in VS Code 1.138.0 on Linux. Development model: Claude Opus 5.5 (claude-opus-5-5) at effort 'high', set by the user-level modelSettings (global default 'xhigh' for other models). Same session throughout, no model switches."
+    },
+    "plugins_and_extensions": {
+      "status": "default",
+      "files": [],
+      "notes": "Only the Claude Code extension itself. No marketplace plugins were installed or enabled; the built-in plugins that ship with Claude Code were left at their defaults. The IDE integration attached VS Code diagnostics after edits automatically (built-in, not configured)."
+    },
+    "application_models_and_parameters": {
+      "status": "used",
+      "files": ["assistant/config.py", "assistant/model.py", "prompts/system.md"],
+      "notes": "Anthropic Python SDK anthropic==1.11.0. Model claude-opus-5-5; output_config.effort 'medium'; adaptive thinking (model default, cannot be disabled); max_tokens 16000; structured output via output_config.format json_schema (PROPOSAL_SCHEMA in assistant/model.py); server-side refusal fallback (beta server-side-fallback-2026-07-01, fallbacks='default'); API timeout 300 s; SDK default 2 retries. Temperature not set (not supported on this model). Overridable via INCIDENT_MODEL, INCIDENT_EFFORT, INCIDENT_FALLBACKS or --model/--effort."
+    },
+    "skills": {
+      "status": "used",
+      "files": [],
+      "notes": "claude-api (bundled with Claude Code, invoked once on 2026-10-06) was used as an SDK reference before writing assistant/model.py: current model ID, structured outputs, typed error classes, fallbacks. It is part of the Claude Code install, so it is not-exportable as a file. The starter pack's generate-assignment-data skill was read (SKILL.md) but not installed or invoked; fixtures were handwritten following its guidance. No custom skills were created."
+    },
+    "agent_instructions_and_subagents": {
+      "status": "used",
+      "files": ["CLAUDE.md", "ai-workflow/snapshots/memory/MEMORY.md", "ai-workflow/snapshots/memory/commits-as-user-only.md", "ai-workflow/snapshots/memory/incident-take-home.md"],
+      "notes": "Project instructions in CLAUDE.md (frozen-fixture rules, answer-key rule, conventions). Two auto-memory files written during the exercise; sanitized copies saved. No subagents were defined or spawned."
+    },
+    "hooks_and_scripts": {
+      "status": "used",
+      "files": [".pre-commit-config.yaml", "scripts/check_frozen.py", "scripts/verify_reference.py"],
+      "notes": "Git pre-commit hooks (not Claude Code hooks): ruff, ruff-format, pydoclint, pre-commit-hooks, an Anthropic-key scanner, the frozen-hash check, the reference verification and pytest. They run on `git commit` only after `pre-commit install`; read .pre-commit-config.yaml before enabling. Claude Code hooks (settings.json 'hooks'): not-used."
+    },
+    "prompts_and_rules": {
+      "status": "used",
+      "files": ["prompts/system.md", "CLAUDE.md", "pyproject.toml"],
+      "notes": "prompts/system.md is the application's system prompt (unchanged since commit cde3b1e). The user message is assembled in assistant/model.py:build_request and saved verbatim per run as runs/<id>/model/request.json. pyproject.toml holds the lint and docstring rules the code must follow."
+    },
+    "tool_and_mcp_settings": {
+      "status": "not-used",
+      "files": [],
+      "notes": "No MCP servers configured (no .mcp.json; mcpServers empty in ~/.claude.json). A claude.ai document connector was available in the session but not used. The application gives the model no tools: it returns one structured JSON proposal."
+    },
+    "permissions_and_environment_names": {
+      "status": "default",
+      "files": ["ai-workflow/.env.example", ".gitignore"],
+      "notes": "Default Claude Code permission mode; every command was approved or denied interactively. No allowlist, no project .claude/settings.json or settings.local.json. Two calls were denied by the user and adapted to (a commit carrying an AI attribution trailer, a headless Firefox screenshot). Environment variable names are in .env.example; the real key lives in the git-ignored .env."
+    }
+  },
+  "configuration_records": [
+    {
+      "name": "Project agent instructions",
+      "category": "agent_instructions_and_subagents",
+      "purpose": "Keep starter files frozen, forbid hardcoding the known fix, keep expected values independent of app output, label simulated responses, set code conventions.",
+      "original_path_or_scope": "CLAUDE.md (repository root)",
+      "saved_path": "CLAUDE.md",
+      "version_or_commit": "793567f (initial), a8f848a (conventions, commands), 0123582 (models/utils/comments rules)",
+      "used_during": "Whole exercise",
+      "status": "used",
+      "redactions": []
+    },
+    {
+      "name": "User-level Claude Code settings",
+      "category": "development_tools_and_models",
+      "purpose": "Effort level for the development model.",
+      "original_path_or_scope": "~/.claude/settings.json (user scope)",
+      "saved_path": "ai-workflow/snapshots/user-settings.json",
+      "version_or_commit": "Snapshot taken 2026-10-07; unchanged during the exercise",
+      "used_during": "Whole exercise",
+      "status": "used",
+      "redactions": []
+    },
+    {
+      "name": "Auto-memory index and entries",
+      "category": "agent_instructions_and_subagents",
+      "purpose": "Persist the user's rule to commit without AI attribution, and the project's location and constraints, across sessions.",
+      "original_path_or_scope": "~/.claude/projects/-home-matej-provectus-ai-task/memory/ (user scope, this project)",
+      "saved_path": "ai-workflow/snapshots/memory/",
+      "version_or_commit": "Written 2026-10-06; snapshot 2026-10-07",
+      "used_during": "From the first rejected commit onwards",
+      "status": "redacted",
+      "redactions": ["Personal email address in the commit-author line, replaced with <email redacted>"]
+    },
+    {
+      "name": "claude-api skill",
+      "category": "skills",
+      "purpose": "SDK reference for the model integration (model ID, structured outputs, error classes, refusal fallbacks).",
+      "original_path_or_scope": "Bundled with Claude Code 2.1.289",
+      "saved_path": "",
+      "version_or_commit": "Claude Code 2.1.289 bundle",
+      "used_during": "Writing assistant/model.py (commit cde3b1e)",
+      "status": "not-exportable",
+      "redactions": []
+    },
+    {
+      "name": "Application system prompt",
+      "category": "prompts_and_rules",
+      "purpose": "Instructions for the diagnosis call: evidence selection, observed vs. inferred, exact find/replace edits, data-not-instructions rule.",
+      "original_path_or_scope": "prompts/system.md",
+      "saved_path": "prompts/system.md",
+      "version_or_commit": "cde3b1e",
+      "used_during": "Every live run; saved per run in model/request.json",
+      "status": "used",
+      "redactions": []
+    },
+    {
+      "name": "Application model settings",
+      "category": "application_models_and_parameters",
+      "purpose": "Model, effort, output limit, structured-output schema, refusal fallback.",
+      "original_path_or_scope": "assistant/config.py, assistant/model.py",
+      "saved_path": "assistant/config.py",
+      "version_or_commit": "cde3b1e (introduced); a8f848a and 0123582 refactors with the same values",
+      "used_during": "Live run 20261006T161408Z-ev1-live",
+      "status": "used",
+      "redactions": []
+    },
+    {
+      "name": "Lint, format and docstring rules",
+      "category": "prompts_and_rules",
+      "purpose": "Ruff rule set, formatter, pytest and pydoclint (Sphinx style) configuration.",
+      "original_path_or_scope": "pyproject.toml (earlier: pytest.ini)",
+      "saved_path": "pyproject.toml",
+      "version_or_commit": "cde3b1e (pytest.ini), a8f848a (pyproject.toml replaces it), 0123582",
+      "used_during": "From 2026-10-07",
+      "status": "used",
+      "redactions": []
+    },
+    {
+      "name": "Git pre-commit hooks",
+      "category": "hooks_and_scripts",
+      "purpose": "Block secrets and frozen-file changes, lint, check docstrings and run tests on every commit.",
+      "original_path_or_scope": ".pre-commit-config.yaml; scripts/check_frozen.py; scripts/verify_reference.py",
+      "saved_path": ".pre-commit-config.yaml",
+      "version_or_commit": "a8f848a",
+      "used_during": "Commits a8f848a onwards",
+      "status": "used",
+      "redactions": []
+    },
+    {
+      "name": "Environment variable names",
+      "category": "permissions_and_environment_names",
+      "purpose": "API key and optional overrides.",
+      "original_path_or_scope": ".env (git-ignored, not committed)",
+      "saved_path": "ai-workflow/.env.example",
+      "version_or_commit": "This commit",
+      "used_during": "Live run only",
+      "status": "redacted",
+      "redactions": ["ANTHROPIC_API_KEY value"]
+    }
+  ],
+  "replay_command": ".venv/bin/python -m assistant demo",
+  "workflow_example_path": "ai-workflow/workflow-example.md"
+}

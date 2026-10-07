@@ -206,7 +206,7 @@ These figures are approximate, taken from commit times and the working session (
 | Docstrings, first live run, demo grading, target-selection fix, README | ~1:05 |
 | **Total so far** | **~2:30** |
 
-Still to do: completing the `ai-workflow/` manifest and README, and the short presentation.
+Still to do: the short presentation.
 
 ## LLM usage
 

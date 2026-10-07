@@ -1,0 +1,2 @@
+- [Commits as user only](commits-as-user-only.md) — no Claude Co-Authored-By trailers; commit as MatejMihailovic
+- [Incident take-home](incident-take-home.md) — task E repo path, GitHub target, 8h limit
