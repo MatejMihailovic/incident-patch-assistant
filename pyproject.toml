@@ -38,7 +38,8 @@ max-args = 6
 max-complexity = 12
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["S101", "PLR2004"]
+# Tests use asserts, literal expected values, private helpers, and names like "pass_count" (S105 false positive).
+"tests/*" = ["S101", "PLR2004", "S105", "SLF001"]
 # Stdlib-only scripts that run with plain `python3` (and as pre-commit hooks); their printed table is their output.
 "scripts/*" = ["T201"]
 

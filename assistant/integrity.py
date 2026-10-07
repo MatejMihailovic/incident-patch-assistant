@@ -28,7 +28,7 @@ def verify_frozen():
     mismatches = []
     for rel, expected in manifest.items():
         path = config.ROOT / rel
-        actual = sha256(path) if path.exists() else None
+        actual = sha256(path) if path.exists() else None  # a deleted file counts as changed
         if actual != expected:
             mismatches.append({"path": rel, "expected": expected, "actual": actual})
     return {"ok": not mismatches, "checked": sorted(manifest), "mismatches": mismatches}

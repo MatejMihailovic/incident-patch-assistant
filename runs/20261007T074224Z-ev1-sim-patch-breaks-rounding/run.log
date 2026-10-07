@@ -1,0 +1,12 @@
+2026-10-07 09:42:24.320 | INFO     | Run 20261007T074224Z-ev1-sim-patch-breaks-rounding started for event EV1
+2026-10-07 09:42:24.320 | DEBUG    | Frozen fixtures intact (before)
+2026-10-07 09:42:24.321 | WARNING  | Malformed event EV5 in fixtures/additions/extra-events.json: missing or invalid 'error'; missing or invalid 'source'
+2026-10-07 09:42:24.321 | INFO     | Selected INC-EV1: ZeroDivisionError at baseline.py:4 (events ['EV1', 'EV2', 'EV4'])
+2026-10-07 09:42:24.352 | INFO     | Baseline: failing ['zero-quantity']; reproducing ZeroDivisionError: ['zero-quantity']
+2026-10-07 09:42:24.381 | INFO     | Using saved response /home/matej/provectus-ai-task/incident-patch-assistant/fixtures/simulated/patch-breaks-rounding.json instead of calling the API
+2026-10-07 09:42:24.381 | INFO     | Response source simulated (input ? / output ? tokens)
+2026-10-07 09:42:24.381 | INFO     | Proposal cites ['EV1', 'EV2', 'EV4'] at baseline.py:4
+2026-10-07 09:42:24.382 | INFO     | Patch applied to a separate copy: /home/matej/provectus-ai-task/incident-patch-assistant/runs/20261007T074224Z-ev1-sim-patch-breaks-rounding/candidate.py
+2026-10-07 09:42:24.449 | INFO     | Candidate: failing ['rounding']
+2026-10-07 09:42:24.493 | DEBUG    | Frozen fixtures intact (after)
+2026-10-07 09:42:24.493 | ERROR    | Run FAILED: Regression: case(s) that passed on the baseline now fail: rounding.

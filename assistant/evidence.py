@@ -2,64 +2,14 @@
 
 import json
 import re
-from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from . import config
+from .models import EventProblem, Incident
+from .utils import relative_to_root
 
 REQUIRED_FIELDS = {"event_id": str, "function": str, "input": dict, "error": str, "source": str}
 SOURCE_PATTERN = re.compile(r"^(?P<file>[\w./-]+):(?P<line>\d+)$")
-
-
-@dataclass
-class Incident:
-    """Events sharing one failure signature: same function, error type and source location.
-
-    :param id: Stable incident ID, ``INC-`` plus the first event ID in the group.
-    :type id: str
-    :param function: Name of the function that failed.
-    :type function: str
-    :param error: Exception type recorded by the events.
-    :type error: str
-    :param source: Reported location in ``file:line`` form.
-    :type source: str
-    :param module: File part of ``source``; the only module a patch may change.
-    :type module: str
-    :param line: Line part of ``source``.
-    :type line: int
-    :param event_ids: IDs of every event with this signature, in load order.
-    :type event_ids: list[str]
-    """
-
-    id: str
-    function: str
-    error: str
-    source: str
-    module: str
-    line: int
-    event_ids: list = field(default_factory=list)
-
-    def to_dict(self):
-        """Serialise the incident for JSON artifacts.
-
-        :returns: All fields as a plain dictionary.
-        :rtype: dict
-        """
-        return asdict(self)
-
-
-def _relative(path):
-    """Express a path relative to the repository root when possible.
-
-    :param path: Any filesystem path.
-    :type path: pathlib.Path or str
-    :returns: Root-relative path, or the path unchanged if it lies outside the root.
-    :rtype: str
-    """
-    try:
-        return str(Path(path).relative_to(config.ROOT))
-    except ValueError:
-        return str(path)
 
 
 def load_events(paths=None):
@@ -70,30 +20,31 @@ def load_events(paths=None):
     :returns: A pair ``(events, problems)``. ``events`` are the valid events, each with an added
         ``_origin`` key naming its file. ``problems`` describes every missing file, unparsable file,
         malformed event or duplicate ID.
-    :rtype: tuple[list[dict], list[dict]]
+    :rtype: tuple[list[dict], list[assistant.models.EventProblem]]
     """
     events, problems, seen = [], [], set()
     for raw_path in paths or config.EVENT_FILES:
         path = Path(raw_path)
-        origin = _relative(path)
+        origin = relative_to_root(path)
         if not path.exists():
-            problems.append({"file": origin, "event_id": None, "problem": "event file not found"})
+            problems.append(EventProblem(origin, "event file not found"))
             continue
         try:
             items = json.loads(path.read_text())
         except json.JSONDecodeError as exc:
-            problems.append({"file": origin, "event_id": None, "problem": f"invalid JSON: {exc}"})
+            problems.append(EventProblem(origin, f"invalid JSON: {exc}"))
             continue
         if not isinstance(items, list):
-            problems.append({"file": origin, "event_id": None, "problem": "expected a JSON list of events"})
+            problems.append(EventProblem(origin, "expected a JSON list of events"))
             continue
         for index, item in enumerate(items):
             event_id = item.get("event_id") if isinstance(item, dict) else None
             issues = _event_issues(item)
+            # IDs must be unique across all files, because the model cites events by ID.
             if event_id in seen:
                 issues.append("duplicate event_id")
             if issues:
-                problems.append({"file": origin, "index": index, "event_id": event_id, "problem": "; ".join(issues)})
+                problems.append(EventProblem(origin, "; ".join(issues), event_id=event_id, index=index))
                 continue
             seen.add(event_id)
             events.append(dict(item, _origin=origin))
@@ -127,7 +78,7 @@ def group_incidents(events):
     :param events: Valid events as returned by :func:`load_events`.
     :type events: list[dict]
     :returns: One incident per distinct signature, in order of first appearance.
-    :rtype: list[Incident]
+    :rtype: list[assistant.models.Incident]
     """
     incidents = {}
     for event in events:
@@ -150,11 +101,11 @@ def find_incident(incidents, event_id):
     """Find the incident that contains an event.
 
     :param incidents: Incidents from :func:`group_incidents`.
-    :type incidents: list[Incident]
+    :type incidents: list[assistant.models.Incident]
     :param event_id: Event selected by the developer, e.g. ``"EV1"``.
     :type event_id: str
     :returns: The matching incident, or ``None`` if no valid event has that ID.
-    :rtype: Incident or None
+    :rtype: assistant.models.Incident or None
     """
     return next((inc for inc in incidents if event_id in inc.event_ids), None)
 

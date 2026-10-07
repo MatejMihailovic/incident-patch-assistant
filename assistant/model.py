@@ -6,13 +6,13 @@ handwritten negative-control fixture).
 """
 
 import json
-from datetime import datetime, timezone
 from pathlib import Path
 
 import anthropic
 
 from . import config
 from .evidence import numbered
+from .utils import to_jsonable, utc_iso
 
 PROPOSAL_SCHEMA = {
     "type": "object",
@@ -86,15 +86,6 @@ class ModelError(Exception):
         self.kind = kind
 
 
-def _now():
-    """Current UTC time for provenance records.
-
-    :returns: ISO 8601 timestamp with second precision.
-    :rtype: str
-    """
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
-
-
 def build_request(selected_event_id, events, malformed, files, *, model, effort):
     """Build the exact Messages API parameters for one diagnosis request.
 
@@ -106,7 +97,7 @@ def build_request(selected_event_id, events, malformed, files, *, model, effort)
     :param events: All valid events; internal keys starting with ``_`` are stripped.
     :type events: list[dict]
     :param malformed: Loader problems, shown to the model as unusable evidence.
-    :type malformed: list[dict]
+    :type malformed: list[assistant.models.EventProblem]
     :param files: Maps a repository-relative file name to its text. Must include ``"domain.md"``.
         Python files are sent with line numbers.
     :type files: dict[str, str]
@@ -118,16 +109,19 @@ def build_request(selected_event_id, events, malformed, files, *, model, effort)
         ``betas`` is present). JSON-serialisable, so the request is saved verbatim with the run.
     :rtype: dict
     """
+    # Keys starting with "_" are loader bookkeeping, not part of the recorded event.
     public_events = [{k: v for k, v in e.items() if not k.startswith("_")} for e in events]
+    malformed_json = json.dumps(to_jsonable(malformed), indent=2)
     parts = [
         f"<task>The developer selected event {selected_event_id}. Diagnose that failure and propose a patch.</task>",
         f'<domain_rules path="domain.md">\n{files["domain.md"]}\n</domain_rules>',
         f"<events>\n{json.dumps(public_events, indent=2)}\n</events>",
-        f'<malformed_events note="rejected by the loader; not usable as evidence">\n{json.dumps(malformed, indent=2)}\n</malformed_events>',
+        f'<malformed_events note="rejected by the loader; not usable as evidence">\n{malformed_json}\n</malformed_events>',
     ]
     for name, text in files.items():
         if name == "domain.md":
             continue
+        # Line numbers let the model cite a location the code can verify.
         if name.endswith(".py"):
             parts.append(f'<file path="{name}" numbered="true">\n{numbered(text)}\n</file>')
         else:
@@ -139,6 +133,7 @@ def build_request(selected_event_id, events, malformed, files, *, model, effort)
         "messages": [{"role": "user", "content": "\n\n".join(parts)}],
         "output_config": {"effort": effort, "format": {"type": "json_schema", "schema": PROPOSAL_SCHEMA}},
     }
+    # On a refusal, the API retries on a fallback model inside the same call.
     if config.USE_FALLBACKS:
         request["betas"] = ["server-side-fallback-2026-07-01"]
         request["fallbacks"] = "default"
@@ -182,7 +177,7 @@ def call_model(request):
             "requested_model": request["model"],
             "served_model": message.model,
             "request_id": message._request_id,  # noqa: SLF001 - documented public accessor in the SDK
-            "received_at": _now(),
+            "received_at": utc_iso(),
             "effort": request["output_config"]["effort"],
             "fallbacks": request.get("fallbacks"),
         },
@@ -212,12 +207,13 @@ def load_response_file(path):
         record["response"]["content"]
     except (json.JSONDecodeError, KeyError, TypeError) as exc:
         raise ModelError("invalid_response_file", f"not a saved response record: {exc}") from exc
+    # Keep the first live call's provenance even when replaying a replay.
     if source in ("live", "replay"):
         original = record["provenance"].get("original", record["provenance"])
         record["provenance"] = {
             "source": "replay",
             "replayed_from": str(path),
-            "replayed_at": _now(),
+            "replayed_at": utc_iso(),
             "original": original,
         }
     return record

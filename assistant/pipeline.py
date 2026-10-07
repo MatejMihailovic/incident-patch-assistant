@@ -1,25 +1,17 @@
 """One run: evidence -> model proposal -> validated patch on a copy -> fixed checks -> saved review package."""
 
 import json
-from datetime import datetime, timezone
 from pathlib import Path
 
 from loguru import logger
 
 from . import checks, config, evidence, integrity, model
 from . import proposal as proposals
+from .models import CheckResult
 from .report import write_report
+from .utils import read_json, to_jsonable, utc_iso, utc_now, write_json
 
 LOG_FORMAT = "{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {message}"
-
-
-def _now():
-    """Current UTC time.
-
-    :returns: Timezone-aware timestamp.
-    :rtype: datetime.datetime
-    """
-    return datetime.now(timezone.utc)
 
 
 class _Stop(Exception):
@@ -50,18 +42,17 @@ class Run:
     """
 
     def __init__(self, runs_dir, event_id, source_label):
-        stamp = _now().strftime("%Y%m%dT%H%M%SZ")
-        base = f"{stamp}-{event_id.lower()}-{source_label}"
+        base = f"{utc_now():%Y%m%dT%H%M%SZ}-{event_id.lower()}-{source_label}"
         runs_dir = Path(runs_dir).resolve()  # checks run from another cwd, so paths must be absolute
         path, n = runs_dir / base, 1
-        while path.exists():
+        while path.exists():  # two runs in the same second
             n += 1
             path = runs_dir / f"{base}-{n}"
         path.mkdir(parents=True)
         self.dir = path
         self.meta = {
             "run_id": path.name,
-            "created_at": _now().isoformat(timespec="seconds"),
+            "created_at": utc_iso(),
             "status": "started",
             "status_reasons": [],
             "selected_event": event_id,
@@ -78,6 +69,7 @@ class Run:
         :rtype: Run
         """
         run_id = self.meta["run_id"]
+        # The filter keeps records from other runs (e.g. the next demo scenario) out of this file.
         self._sink_id = logger.add(
             self.dir / "run.log",
             level="DEBUG",
@@ -112,11 +104,10 @@ class Run:
 
         :param name: Path relative to the run directory; parent folders are created.
         :type name: str
-        :param data: JSON-serialisable content.
+        :param data: JSON-serialisable content; data models are converted.
         :type data: object
         """
-        (self.dir / name).parent.mkdir(parents=True, exist_ok=True)
-        (self.dir / name).write_text(json.dumps(data, indent=2) + "\n")
+        write_json(self.dir / name, data)
         self._track(name)
 
     def save_text(self, name, text):
@@ -163,7 +154,7 @@ class Run:
         """
         log = logger.success if status == "checked" else logger.error
         log("Run {}: {}", status.upper(), " ".join(reasons))
-        self.meta["finished_at"] = _now().isoformat(timespec="seconds")
+        self.meta["finished_at"] = utc_iso()
         self.set_status(status, *reasons)
         write_report(self.dir)
         return self.dir
@@ -243,6 +234,7 @@ def _stages(run, event_id, response_file, model_name, effort):
     _verify_frozen(run, "before")
     events, malformed, incident, files = _load_context(run, event_id)
     module_path = config.REPO_DIR / incident.module
+    # Everything up to here is free; stop before the model call if there is nothing to verify.
     targets, baseline_failing = _baseline_checks(run, incident, module_path)
 
     request = model.build_request(event_id, events, malformed, files, model=model_name, effort=effort)
@@ -250,10 +242,11 @@ def _stages(run, event_id, response_file, model_name, effort):
     proposal = _get_proposal(run, request, response_file)
 
     candidate_path, findings = _build_candidate(run, proposal, incident, files[incident.module], events)
-    candidate_full = _candidate_checks(run, candidate_path, targets)
+    candidate = _candidate_checks(run, candidate_path, targets)
     _extra_inputs(run, module_path, candidate_path, incident.function)
+    # Not fatal here: _decide reports a change together with the other results.
     _verify_frozen(run, "after", stop=False)
-    return _decide(run, findings, candidate_full, targets, baseline_failing)
+    return _decide(run, findings, candidate, targets, baseline_failing)
 
 
 def _verify_frozen(run, moment, *, stop=True):
@@ -285,23 +278,21 @@ def _load_context(run, event_id):
     :param event_id: Selected event.
     :type event_id: str
     :returns: ``(events, malformed, incident, files)``, where ``files`` maps a file name to its text.
-    :rtype: tuple[list[dict], list[dict], assistant.evidence.Incident, dict[str, str]]
+    :rtype: tuple[list[dict], list[assistant.models.EventProblem], assistant.models.Incident, dict[str, str]]
     :raises _Stop: If the event is unknown or a repository file is missing.
     """
     events, malformed = evidence.load_events()
     incidents = evidence.group_incidents(events)
     for problem in malformed:
-        logger.warning("Malformed event {} in {}: {}", problem.get("event_id"), problem["file"], problem["problem"])
+        logger.warning("Malformed event {} in {}: {}", problem.event_id, problem.file, problem.problem)
     incident = evidence.find_incident(incidents, event_id)
-    run.save_json(
-        "evidence/events.json",
-        {"events": events, "malformed": malformed, "incidents": [i.to_dict() for i in incidents]},
-    )
+    run.save_json("evidence/events.json", {"events": events, "malformed": malformed, "incidents": incidents})
     if incident is None:
         raise _Stop(f"Event {event_id} was not found among valid events.")
-    run.meta["incident"] = incident.to_dict()
+    run.meta["incident"] = to_jsonable(incident)
     logger.info("Selected {}: {} at {} (events {})", incident.id, incident.error, incident.source, incident.event_ids)
 
+    # The model sees the tests as context; only incident.module may ever be patched.
     files = {}
     for name in (incident.module, "reference-cases.json", "check.py", "domain.md"):
         path = config.REPO_DIR / name
@@ -324,19 +315,20 @@ def _baseline_checks(run, incident, module_path):
     :param run: The open run.
     :type run: Run
     :param incident: Selected incident.
-    :type incident: assistant.evidence.Incident
+    :type incident: assistant.models.Incident
     :param module_path: The frozen baseline module.
     :type module_path: pathlib.Path
     :returns: ``(targets, baseline_failing)``: target case IDs and all case IDs failing on the baseline.
     :rtype: tuple[list[str], list[str]]
     :raises _Stop: If the check cannot evaluate the baseline or no case reproduces the incident.
     """
-    baseline_full = checks.run_check(module_path)
-    run.save_json("checks/baseline-full.json", baseline_full)
-    if baseline_full["results"] is None:
+    baseline = checks.run_check(module_path)
+    run.save_json("checks/baseline-full.json", baseline)
+    if baseline.results is None:
         raise _Stop("The fixed check could not evaluate the baseline module.")
-    baseline_failing = checks.failing_ids(baseline_full)
-    targets = [r["id"] for r in baseline_full["results"] if not r["passed"] and r.get("error") == incident.error]
+    baseline_failing = baseline.failing_ids
+    # Match on error type so another incident's failing case is never treated as this one's target.
+    targets = [r["id"] for r in baseline.results if not r["passed"] and r.get("error") == incident.error]
     run.meta["target_cases"] = targets
     run.meta["baseline_failing_cases"] = baseline_failing
     logger.info(
@@ -374,9 +366,10 @@ def _get_proposal(run, request, response_file):
     except model.ModelError as exc:
         run.save_json("model/error.json", {"kind": exc.kind, "message": str(exc)})
         raise _Stop(f"Model call failed ({exc.kind}): {exc}") from exc
+    # Saved before parsing, so even unusable output stays available for review.
     run.save_json("model/response.json", record)
     run.meta["provenance"] = record["provenance"]
-    usage = record["response"].get("usage") or {}
+    usage = record["response"].get("usage") or {}  # simulated responses have no usage
     logger.info(
         "Response source {} (input {} / output {} tokens)",
         record["provenance"]["source"],
@@ -389,12 +382,8 @@ def _get_proposal(run, request, response_file):
         raise _Stop(f"Unusable model output: {exc}") from exc
     run.save_json("model/proposal.json", proposal)
     run.set_status("proposed")
-    logger.info(
-        "Proposal cites {} at {}:{}",
-        proposal["relevant_event_ids"],
-        proposal["source_location"]["file"],
-        proposal["source_location"]["line"],
-    )
+    location = proposal["source_location"]
+    logger.info("Proposal cites {} at {}:{}", proposal["relevant_event_ids"], location["file"], location["line"])
     return proposal
 
 
@@ -406,27 +395,29 @@ def _build_candidate(run, proposal, incident, original, events):
     :param proposal: Parsed proposal.
     :type proposal: dict
     :param incident: Selected incident.
-    :type incident: assistant.evidence.Incident
+    :type incident: assistant.models.Incident
     :param original: Current text of the incident's module.
     :type original: str
     :param events: All valid events, used to detect invented event IDs.
     :type events: list[dict]
     :returns: ``(candidate_path, findings)``.
-    :rtype: tuple[pathlib.Path, list[dict]]
+    :rtype: tuple[pathlib.Path, list[assistant.models.Finding]]
     :raises _Stop: If the patch is rejected; the baseline is never written.
     """
     findings = proposals.check_diagnosis(proposal, incident, {e["event_id"] for e in events}, original)
     candidate_text, patch_findings = proposals.apply_patch(proposal, incident, original)
     findings += patch_findings
-    run.meta["findings"] = findings
+    run.meta["findings"] = to_jsonable(findings)
     for item in findings:
-        (logger.error if item["level"] == "error" else logger.warning)("{}: {}", item["code"], item["message"])
+        (logger.error if item.is_error else logger.warning)("{}: {}", item.code, item.message)
     if candidate_text is None:
         raise _Stop("The proposed patch was rejected; the baseline is unchanged.")
+    # Diagnosis errors don't stop the run here: the checks still run so the reviewer sees the full picture.
+    candidate_path = run.dir / "candidate.py"
     run.save_text("candidate.py", candidate_text)
     run.save_text("patch.diff", "".join(proposals.diff_lines(original, candidate_text, incident.module)))
-    logger.info("Patch applied to a separate copy: {}", run.dir / "candidate.py")
-    return run.dir / "candidate.py", findings
+    logger.info("Patch applied to a separate copy: {}", candidate_path)
+    return candidate_path, findings
 
 
 def _candidate_checks(run, candidate_path, targets):
@@ -438,15 +429,15 @@ def _candidate_checks(run, candidate_path, targets):
     :type candidate_path: pathlib.Path
     :param targets: Target case IDs, each also run on its own.
     :type targets: list[str]
-    :returns: Full-set result from :func:`assistant.checks.run_check`.
-    :rtype: dict
+    :returns: Full-set result on the candidate.
+    :rtype: assistant.models.CheckResult
     """
-    candidate_full = checks.run_check(candidate_path)
-    run.save_json("checks/candidate-full.json", candidate_full)
+    candidate = checks.run_check(candidate_path)
+    run.save_json("checks/candidate-full.json", candidate)
     for case_id in targets:
         run.save_json(f"checks/candidate-case-{case_id}.json", checks.run_check(candidate_path, case_id))
-    logger.info("Candidate: failing {}", checks.failing_ids(candidate_full) or "none")
-    return candidate_full
+    logger.info("Candidate: failing {}", candidate.failing_ids or "none")
+    return candidate
 
 
 def _extra_inputs(run, module_path, candidate_path, function):
@@ -472,15 +463,15 @@ def _extra_inputs(run, module_path, candidate_path, function):
     )
 
 
-def _decide(run, findings, candidate_full, targets, baseline_failing):
+def _decide(run, findings, candidate, targets, baseline_failing):
     """Decide the status from recorded evidence only; the model's own claims do not count.
 
     :param run: The open run.
     :type run: Run
     :param findings: Code findings on the proposal.
-    :type findings: list[dict]
-    :param candidate_full: Full-set check result on the candidate.
-    :type candidate_full: dict
+    :type findings: list[assistant.models.Finding]
+    :param candidate: Full-set check result on the candidate.
+    :type candidate: assistant.models.CheckResult
     :param targets: Cases that reproduced the incident on the baseline.
     :type targets: list[str]
     :param baseline_failing: All cases failing on the baseline.
@@ -489,16 +480,17 @@ def _decide(run, findings, candidate_full, targets, baseline_failing):
     :rtype: list[str]
     :raises _Stop: With every failure reason, if any check did not hold.
     """
+    # Collect every reason instead of stopping at the first, so the report explains the whole failure.
     reasons = []
     if not run.meta["integrity"]["after"]["ok"]:
         reasons.append("Frozen fixtures changed during the run.")
-    errors = [f for f in findings if f["level"] == "error"]
+    errors = [f for f in findings if f.is_error]
     if errors:
-        reasons.append("Validation errors: " + "; ".join(f["message"] for f in errors))
-    if candidate_full["results"] is None:
+        reasons.append("Validation errors: " + "; ".join(f.message for f in errors))
+    if candidate.results is None:
         reasons.append("The fixed check could not evaluate the candidate module.")
     else:
-        failing = checks.failing_ids(candidate_full)
+        failing = candidate.failing_ids
         still = [c for c in targets if c in failing]
         regressed = [c for c in failing if c not in baseline_failing]
         unrelated = [c for c in failing if c in baseline_failing and c not in targets]
@@ -510,12 +502,12 @@ def _decide(run, findings, candidate_full, targets, baseline_failing):
             reasons.append(
                 f"Case(s) unrelated to this incident still fail, so the full set does not pass: {', '.join(unrelated)}."
             )
-    if candidate_full["timed_out"]:
+    if candidate.timed_out:
         reasons.append("The candidate check timed out.")
     if reasons:
         raise _Stop(*reasons)
     summary = (
-        f"All {len(candidate_full['results'])} reference cases pass on the candidate copy; "
+        f"All {len(candidate.results)} reference cases pass on the candidate copy; "
         f"previously failing: {', '.join(targets)}."
     )
     return [summary]
@@ -534,19 +526,19 @@ def recheck(run_dir):
     :rtype: dict
     """
     run_dir = Path(run_dir)
-    incident = json.loads((run_dir / "run.json").read_text()).get("incident")
+    incident = read_json(run_dir / "run.json").get("incident")
     baseline_path = config.REPO_DIR / incident["module"] if incident else None
-    comparison = {"checked_at": _now().isoformat(timespec="seconds")}
+    comparison = {"checked_at": utc_iso()}
     for label, module_path in (("baseline", baseline_path), ("candidate", run_dir / "candidate.py")):
-        saved_path = run_dir / "checks" / f"{label}-full.json"
-        if module_path is None or not module_path.exists() or not saved_path.exists():
+        saved = CheckResult.from_dict(read_json(run_dir / "checks" / f"{label}-full.json"))
+        if module_path is None or not module_path.exists() or saved is None:
             comparison[label] = {"available": False}
             continue
-        saved = json.loads(saved_path.read_text())
         fresh = checks.run_check(module_path)
-        same = (fresh["exit_code"], fresh["results"]) == (saved["exit_code"], saved["results"])
-        comparison[label] = {"available": True, "reproduced": same, "exit_code": fresh["exit_code"]}
+        # Compare outcomes only; durations and absolute paths legitimately differ between runs.
+        same = (fresh.exit_code, fresh.results) == (saved.exit_code, saved.results)
+        comparison[label] = {"available": True, "reproduced": same, "exit_code": fresh.exit_code}
         logger.info("Recheck {}: {}", label, "reproduced" if same else "DIFFERENT from saved results")
     comparison["integrity"] = integrity.verify_frozen()
-    (run_dir / "replay-recheck.json").write_text(json.dumps(comparison, indent=2) + "\n")
+    write_json(run_dir / "replay-recheck.json", comparison)
     return comparison

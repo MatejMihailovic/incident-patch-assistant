@@ -118,6 +118,8 @@ baseline.py, check.py, reference-cases.json, domain.md ──► read at runtime
 | [`assistant/report.py`](assistant/report.py) | Self-contained HTML report built only from a run's saved files |
 | [`assistant/demo.py`](assistant/demo.py) | Minimum demonstration and grading of the five checks |
 | [`assistant/cli.py`](assistant/cli.py) | Argument parsing and logging setup |
+| [`assistant/models.py`](assistant/models.py) | Data models shared across modules: `Incident`, `EventProblem`, `Finding`, `CheckResult`, `DemoCheck`. They serialise to the same keys as the saved JSON. |
+| [`assistant/utils.py`](assistant/utils.py) | Reused helpers: UTC time, JSON read/write that understands the models, root-relative paths |
 
 ### What the model decides vs. what the code verifies
 

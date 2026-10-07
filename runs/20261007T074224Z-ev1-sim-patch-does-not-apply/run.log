@@ -1,0 +1,10 @@
+2026-10-07 09:42:24.496 | INFO     | Run 20261007T074224Z-ev1-sim-patch-does-not-apply started for event EV1
+2026-10-07 09:42:24.497 | DEBUG    | Frozen fixtures intact (before)
+2026-10-07 09:42:24.497 | WARNING  | Malformed event EV5 in fixtures/additions/extra-events.json: missing or invalid 'error'; missing or invalid 'source'
+2026-10-07 09:42:24.497 | INFO     | Selected INC-EV1: ZeroDivisionError at baseline.py:4 (events ['EV1', 'EV2', 'EV4'])
+2026-10-07 09:42:24.524 | INFO     | Baseline: failing ['zero-quantity']; reproducing ZeroDivisionError: ['zero-quantity']
+2026-10-07 09:42:24.561 | INFO     | Using saved response /home/matej/provectus-ai-task/incident-patch-assistant/fixtures/simulated/patch-does-not-apply.json instead of calling the API
+2026-10-07 09:42:24.562 | INFO     | Response source simulated (input ? / output ? tokens)
+2026-10-07 09:42:24.562 | INFO     | Proposal cites ['EV1', 'EV2', 'EV4'] at baseline.py:4
+2026-10-07 09:42:24.562 | ERROR    | edit_does_not_apply: Edit 1: find text matches 0 times (must match exactly once).
+2026-10-07 09:42:24.562 | ERROR    | Run FAILED: The proposed patch was rejected; the baseline is unchanged.

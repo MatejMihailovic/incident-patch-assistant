@@ -10,6 +10,8 @@ from html import escape
 from pathlib import Path
 
 from .checks import grade_extra
+from .models import CheckResult
+from .utils import read_json
 
 CSS = """
 :root{--bg:#fbfbfa;--fg:#1d1d1b;--muted:#6b6b66;--card:#fff;--line:#e3e2dd;--ok:#1f7a3a;--okbg:#e6f4ea;
@@ -30,20 +32,6 @@ details{margin:6px 0}summary{cursor:pointer;color:var(--muted)}ul{margin:6px 0;p
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px}
 .label{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
 """
-
-
-def _load(run_dir, name):
-    """Read a JSON artifact if it exists. Runs that failed early have fewer artifacts.
-
-    :param run_dir: Run directory.
-    :type run_dir: pathlib.Path
-    :param name: Artifact path relative to the run directory.
-    :type name: str
-    :returns: Parsed JSON, or ``None`` if the artifact is absent.
-    :rtype: object or None
-    """
-    path = run_dir / name
-    return json.loads(path.read_text()) if path.exists() else None
 
 
 def _badge(text, kind):
@@ -150,17 +138,17 @@ def _diff_html(diff):
 def _check_details(check):
     """Render one check invocation as a collapsible block with its command, exit state and raw output.
 
-    :param check: Result from :func:`assistant.checks.run_check`, or ``None``.
-    :type check: dict or None
+    :param check: A saved check result, or ``None``.
+    :type check: assistant.models.CheckResult or None
     :returns: HTML ``<details>`` block, or an empty string.
     :rtype: str
     """
     if not check:
         return ""
-    state = "timed out" if check["timed_out"] else f"exit {check['exit_code']}"
+    state = "timed out" if check.timed_out else f"exit {check.exit_code}"
     return (
-        f"<details><summary><code>{escape(check['command'])}</code> → {escape(state)} "
-        f"({check['duration_s']}s)</summary><pre>{escape(check['stdout'] or '')}{escape(check['stderr'] or '')}</pre></details>"
+        f"<details><summary><code>{escape(check.command)}</code> → {escape(state)} "
+        f"({check.duration_s}s)</summary><pre>{escape(check.stdout)}{escape(check.stderr)}</pre></details>"
     )
 
 
@@ -183,9 +171,9 @@ class RunData:
     :param response: Saved model response record.
     :type response: dict or None
     :param base_full: Full-set check on the baseline.
-    :type base_full: dict or None
+    :type base_full: assistant.models.CheckResult or None
     :param cand_full: Full-set check on the candidate.
-    :type cand_full: dict or None
+    :type cand_full: assistant.models.CheckResult or None
     :param extra: Supplementary-input results.
     :type extra: dict or None
     :param recheck: Offline recheck comparison, if a replay ran one.
@@ -201,8 +189,8 @@ class RunData:
     proposal: dict | None
     model_error: dict | None
     response: dict | None
-    base_full: dict | None
-    cand_full: dict | None
+    base_full: CheckResult | None
+    cand_full: CheckResult | None
     extra: dict | None
     recheck: dict | None
     diff: str | None
@@ -238,30 +226,18 @@ def load_run(run_dir):
     diff_path = run_dir / "patch.diff"
     return RunData(
         dir=run_dir,
-        meta=_load(run_dir, "run.json") or {},
-        evidence=_load(run_dir, "evidence/events.json") or {"events": [], "malformed": []},
-        files=_load(run_dir, "evidence/files.json") or {},
-        proposal=_load(run_dir, "model/proposal.json"),
-        model_error=_load(run_dir, "model/error.json"),
-        response=_load(run_dir, "model/response.json"),
-        base_full=_load(run_dir, "checks/baseline-full.json"),
-        cand_full=_load(run_dir, "checks/candidate-full.json"),
-        extra=_load(run_dir, "checks/extra-inputs.json"),
-        recheck=_load(run_dir, "replay-recheck.json"),
+        meta=read_json(run_dir / "run.json") or {},
+        evidence=read_json(run_dir / "evidence/events.json") or {"events": [], "malformed": []},
+        files=read_json(run_dir / "evidence/files.json") or {},
+        proposal=read_json(run_dir / "model/proposal.json"),
+        model_error=read_json(run_dir / "model/error.json"),
+        response=read_json(run_dir / "model/response.json"),
+        base_full=CheckResult.from_dict(read_json(run_dir / "checks/baseline-full.json")),
+        cand_full=CheckResult.from_dict(read_json(run_dir / "checks/candidate-full.json")),
+        extra=read_json(run_dir / "checks/extra-inputs.json"),
+        recheck=read_json(run_dir / "replay-recheck.json"),
         diff=diff_path.read_text() if diff_path.exists() else None,
     )
-
-
-def _pass_count(check):
-    """Format a pass count for the headline cards.
-
-    :param check: Result from :func:`assistant.checks.run_check`, or ``None``.
-    :type check: dict or None
-    :returns: ``"passed/total"``, or an em dash when there are no results.
-    :rtype: str
-    """
-    results = (check or {}).get("results")
-    return f"{sum(r['passed'] for r in results)}/{len(results)}" if results else "—"
 
 
 def _section_header(d):
@@ -293,15 +269,18 @@ def _section_headline(d):
     :rtype: str
     """
     target_after = "—"
-    if d.cand_full and d.cand_full.get("results") and d.targets:
-        ok = all(r["passed"] for r in d.cand_full["results"] if r["id"] in d.targets)
+    if d.cand_full and d.cand_full.results and d.targets:
+        ok = all(r["passed"] for r in d.cand_full.results if r["id"] in d.targets)
         target_after = "passes" if ok else "still fails"
     integrity = d.meta.get("integrity", {})
+    # None means the run stopped before the hashes were checked.
     intact = all(v.get("ok") for v in integrity.values()) if integrity else None
+    base_count = d.base_full.pass_count if d.base_full else "—"
+    cand_count = d.cand_full.pass_count if d.cand_full else "—"
     cards = (
         ("Failing case(s) on baseline", ", ".join(d.targets) or "none"),
         ("Failing case(s) after patch", target_after),
-        ("Reference cases: baseline → candidate", f"{_pass_count(d.base_full)} → {_pass_count(d.cand_full)}"),
+        ("Reference cases: baseline → candidate", f"{base_count} → {cand_count}"),
         ("Frozen fixtures unchanged", {True: "yes", False: "NO", None: "—"}[intact]),
     )
     return (
@@ -455,10 +434,10 @@ def _section_checks(d):
     :rtype: str
     """
     parts = ["<h2>Fixed check: before and after</h2>"]
-    if d.base_full and d.base_full.get("results"):
-        cand = {r["id"]: r for r in (d.cand_full or {}).get("results") or []}
+    if d.base_full and d.base_full.results:
+        cand = {r["id"]: r for r in (d.cand_full.results if d.cand_full else None) or []}
         rows = []
-        for r in d.base_full["results"]:
+        for r in d.base_full.results:
             c = cand.get(r["id"])
             changed = c is not None and (c.get("passed") != r["passed"] or c.get("actual") != r.get("actual"))
             target = " " + _badge("target", "info") if r["id"] in d.targets else ""
@@ -471,13 +450,13 @@ def _section_checks(d):
             "<div class=scroll><table><tr><th>Case</th><th>Args</th><th>Expected (frozen)</th><th>Baseline</th>"
             "<th>Candidate</th><th>Change</th></tr>" + "".join(rows) + "</table></div>"
         )
-    if d.cand_full and d.cand_full.get("load_error"):
+    if d.cand_full and d.cand_full.load_error:
         parts.append(
             f"<div class=card>{_badge('candidate failed to load', 'bad')} "
-            f"{escape(json.dumps(d.cand_full['load_error']))}</div>"
+            f"{escape(json.dumps(d.cand_full.load_error))}</div>"
         )
     check_files = [p for pattern in ("*-full.json", "*-case-*.json") for p in sorted((d.dir / "checks").glob(pattern))]
-    details = "".join(_check_details(_load(d.dir, f"checks/{p.name}")) for p in check_files)
+    details = "".join(_check_details(CheckResult.from_dict(read_json(p))) for p in check_files)
     parts.append(f"<div class=card><b>Commands and raw output</b>{details}</div>")
     return "".join(parts)
 
@@ -545,7 +524,7 @@ def _section_limits(d):
     :returns: HTML fragment.
     :rtype: str
     """
-    n_ref = len((d.base_full or {}).get("results") or [])
+    n_ref = len(d.base_full.results or []) if d.base_full else 0
     extra = f" and is accompanied by {len(d.extra['cases'])} supplementary inputs" if d.extra else ""
     items = [
         (

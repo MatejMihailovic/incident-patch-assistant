@@ -20,7 +20,7 @@ def configure_logging(*, verbose=False):
     :param verbose: Show DEBUG records. Otherwise the level comes from ``INCIDENT_LOG_LEVEL`` (default ``INFO``).
     :type verbose: bool
     """
-    logger.remove()
+    logger.remove()  # drop loguru's default DEBUG handler
     level = "DEBUG" if verbose else os.environ.get("INCIDENT_LOG_LEVEL", "INFO")
     logger.add(sys.stderr, level=level, format=CONSOLE_FORMAT)
 
@@ -39,7 +39,7 @@ def cmd_incidents(_args):
             "{}: {} raised {} at {}  events={}", inc.id, inc.function, inc.error, inc.source, ",".join(inc.event_ids)
         )
     for m in malformed:
-        logger.warning("Malformed {} in {}: {}", m.get("event_id"), m["file"], m["problem"])
+        logger.warning("Malformed {} in {}: {}", m.event_id, m.file, m.problem)
     return 0
 
 
@@ -87,7 +87,7 @@ def cmd_replay(args):
         logger.error("Not a run directory: {}", run_dir)
         return 2
     if args.recheck:
-        pipeline.recheck(run_dir)
+        pipeline.recheck(run_dir)  # logs whether the saved results reproduced
     write_report(run_dir)
     _summary(run_dir)
     return 0
@@ -109,16 +109,15 @@ def cmd_demo(args):
     except RuntimeError as exc:
         logger.error("{}", exc)
         return 2
-    for run_dir in [scenarios["real"], *scenarios["simulated"]]:
+    for run_dir in [scenarios.real, *scenarios.simulated]:
         _summary(run_dir)
     rows = demo.grade(scenarios)
     path = demo.write_results(rows, scenarios, args.out)
     for n, row in enumerate(rows, start=1):
-        (logger.success if row["passed"] else logger.error)(
-            "Check {}: {}  {}", n, "PASS" if row["passed"] else "FAIL", row["check"]
-        )
-    logger.info("{}/{} checks passed; table written to {}", sum(r["passed"] for r in rows), len(rows), path)
-    return 0 if all(r["passed"] for r in rows) else 1
+        log = logger.success if row.passed else logger.error
+        log("Check {}: {}  {}", n, "PASS" if row.passed else "FAIL", row.check)
+    logger.info("{}/{} checks passed; table written to {}", sum(r.passed for r in rows), len(rows), path)
+    return 0 if all(r.passed for r in rows) else 1
 
 
 def main(argv=None):

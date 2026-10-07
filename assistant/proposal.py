@@ -1,6 +1,6 @@
 """Validate the model's proposal in code and apply its patch to a separate copy.
 
-Findings have a level: "error" makes the run fail; "warning" is shown to the reviewer.
+Every check produces :class:`assistant.models.Finding` objects; errors fail the run, warnings are shown only.
 """
 
 import ast
@@ -9,27 +9,14 @@ import json
 
 from . import config
 from .model import PROPOSAL_SCHEMA
+from .models import Finding
 
+# More changed lines than this earns a warning: the brief asks for a patch limited to the defect.
 MAX_CHANGED_LINES = 15
 
 
 class ProposalError(Exception):
     """The model's output is not valid JSON or does not match :data:`assistant.model.PROPOSAL_SCHEMA`."""
-
-
-def finding(level, code, message):
-    """Build one validation finding.
-
-    :param level: ``"error"`` (the run fails) or ``"warning"`` (shown to the reviewer only).
-    :type level: str
-    :param code: Stable identifier, e.g. ``"unrelated_event_cited"``.
-    :type code: str
-    :param message: Human-readable explanation.
-    :type message: str
-    :returns: ``{"level", "code", "message"}``.
-    :rtype: dict
-    """
-    return {"level": level, "code": code, "message": message}
 
 
 def parse_proposal(text):
@@ -55,6 +42,7 @@ def parse_proposal(text):
     return data
 
 
+# JSON Schema type names used in PROPOSAL_SCHEMA, mapped to Python types.
 _TYPES = {"object": dict, "array": list, "string": str, "integer": int}
 
 
@@ -97,66 +85,43 @@ def check_diagnosis(proposal, incident, all_event_ids, module_text):
     :param proposal: Parsed proposal from :func:`parse_proposal`.
     :type proposal: dict
     :param incident: The incident the developer selected, grouped in code.
-    :type incident: assistant.evidence.Incident
+    :type incident: assistant.models.Incident
     :param all_event_ids: IDs of every valid event, used to detect invented IDs.
     :type all_event_ids: set[str]
     :param module_text: Current text of the incident's module, used to check the cited line.
     :type module_text: str
     :returns: Findings. Errors: ``no_evidence``, ``unknown_event``, ``unrelated_event_cited``,
         ``wrong_file``, ``line_out_of_range``. Warnings: ``evidence_not_cited``, ``line_differs``.
-    :rtype: list[dict]
+    :rtype: list[assistant.models.Finding]
     """
     findings = []
     cited = proposal["relevant_event_ids"]
     if not cited:
-        findings.append(finding("error", "no_evidence", "The diagnosis cites no event."))
+        findings.append(Finding.error("no_evidence", "The diagnosis cites no event."))
     for event_id in cited:
         if event_id not in all_event_ids:
-            findings.append(finding("error", "unknown_event", f"Cited event {event_id} does not exist."))
+            findings.append(Finding.error("unknown_event", f"Cited event {event_id} does not exist."))
         elif event_id not in incident.event_ids:
-            findings.append(
-                finding(
-                    "error",
-                    "unrelated_event_cited",
-                    f"Cited event {event_id} records a different failure than {incident.id}.",
-                )
-            )
+            # Exists, but the code grouped it under a different failure signature.
+            message = f"Cited event {event_id} records a different failure than {incident.id}."
+            findings.append(Finding.error("unrelated_event_cited", message))
     missing = [e for e in incident.event_ids if e not in cited]
     if missing:
-        findings.append(
-            finding(
-                "warning",
-                "evidence_not_cited",
-                f"Events with the same failure signature were not cited: {', '.join(missing)}.",
-            )
-        )
+        message = f"Events with the same failure signature were not cited: {', '.join(missing)}."
+        findings.append(Finding.warning("evidence_not_cited", message))
 
     location = proposal["source_location"]
     line_count = len(module_text.splitlines())
     if location["file"] != incident.module:
-        findings.append(
-            finding(
-                "error",
-                "wrong_file",
-                f"Diagnosis points at {location['file']}, but the events report {incident.module}.",
-            )
-        )
+        message = f"Diagnosis points at {location['file']}, but the events report {incident.module}."
+        findings.append(Finding.error("wrong_file", message))
     elif not 1 <= location["line"] <= line_count:
-        findings.append(
-            finding(
-                "error",
-                "line_out_of_range",
-                f"Line {location['line']} does not exist ({incident.module} has {line_count} lines).",
-            )
-        )
+        message = f"Line {location['line']} does not exist ({incident.module} has {line_count} lines)."
+        findings.append(Finding.error("line_out_of_range", message))
     elif location["line"] != incident.line:
-        findings.append(
-            finding(
-                "warning",
-                "line_differs",
-                f"Diagnosis cites line {location['line']}; the events report line {incident.line}.",
-            )
-        )
+        # Not an error: the defect can sit near the reported line.
+        message = f"Diagnosis cites line {location['line']}; the events report line {incident.line}."
+        findings.append(Finding.warning("line_differs", message))
     return findings
 
 
@@ -168,7 +133,7 @@ def apply_patch(proposal, incident, original_text):
     :param proposal: Parsed proposal from :func:`parse_proposal`.
     :type proposal: dict
     :param incident: The selected incident; its ``module`` is the only file a patch may target.
-    :type incident: assistant.evidence.Incident
+    :type incident: assistant.models.Incident
     :param original_text: Current text of the module.
     :type original_text: str
     :returns: A pair ``(candidate_text, findings)``. ``candidate_text`` is ``None`` when the patch is
@@ -176,56 +141,51 @@ def apply_patch(proposal, incident, original_text):
         ``syntax_error``, ``unsafe_construct``); the candidate must then not be executed. When text
         is returned, ``findings`` may still hold an ``interface_changed`` error or a ``large_patch``
         warning.
-    :rtype: tuple[str or None, list[dict]]
+    :rtype: tuple[str or None, list[assistant.models.Finding]]
     """
     patch = proposal["patch"]
     target = patch["file"]
     if target != incident.module or target in config.PROTECTED_FILES:
         return None, [
-            finding("error", "patch_outside_module", f"Patch targets {target}; only {incident.module} may change.")
+            Finding.error("patch_outside_module", f"Patch targets {target}; only {incident.module} may change.")
         ]
     if not patch["edits"]:
-        return None, [finding("error", "empty_patch", "The proposal contains no edits.")]
+        return None, [Finding.error("empty_patch", "The proposal contains no edits.")]
 
+    # Exact, unique matches keep the patch auditable: no fuzzy matching, no guessing which occurrence.
     text = original_text
     for number, edit in enumerate(patch["edits"], start=1):
         count = text.count(edit["find"]) if edit["find"] else 0
         if count != 1:
             reason = "is empty" if not edit["find"] else f"matches {count} times (must match exactly once)"
-            return None, [finding("error", "edit_does_not_apply", f"Edit {number}: find text {reason}.")]
+            return None, [Finding.error("edit_does_not_apply", f"Edit {number}: find text {reason}.")]
         text = text.replace(edit["find"], edit["replace"], 1)
 
     if text == original_text:
-        return None, [finding("error", "no_change", "The edits leave the module unchanged.")]
+        return None, [Finding.error("no_change", "The edits leave the module unchanged.")]
     try:
         new_tree = ast.parse(text)
     except SyntaxError as exc:
-        return None, [finding("error", "syntax_error", f"Patched module does not parse: {exc}")]
+        return None, [Finding.error("syntax_error", f"Patched module does not parse: {exc}")]
 
+    # Only constructs the patch adds count; the baseline's own code is trusted.
     unsafe = _unsafe_constructs(new_tree) - _unsafe_constructs(ast.parse(original_text))
     if unsafe:
-        return None, [
-            finding("error", "unsafe_construct", f"Patch introduces {', '.join(sorted(unsafe))}; it was not executed.")
-        ]
+        message = f"Patch introduces {', '.join(sorted(unsafe))}; it was not executed."
+        return None, [Finding.error("unsafe_construct", message)]
 
     findings = []
     old_sig = _signature(ast.parse(original_text), incident.function)
     new_sig = _signature(new_tree, incident.function)
     if new_sig != old_sig:
-        findings.append(
-            finding(
-                "error", "interface_changed", f"Signature of {incident.function} changed from {old_sig} to {new_sig}."
-            )
-        )
+        message = f"Signature of {incident.function} changed from {old_sig} to {new_sig}."
+        findings.append(Finding.error("interface_changed", message))
     changed = sum(
         1 for line in diff_lines(original_text, text, target) if line[:1] in "+-" and line[:3] not in ("+++", "---")
     )
     if changed > MAX_CHANGED_LINES:
-        findings.append(
-            finding(
-                "warning", "large_patch", f"{changed} changed lines; expected a minimal fix (≤ {MAX_CHANGED_LINES})."
-            )
-        )
+        message = f"{changed} changed lines; expected a minimal fix (≤ {MAX_CHANGED_LINES})."
+        findings.append(Finding.warning("large_patch", message))
     return text, findings
 
 

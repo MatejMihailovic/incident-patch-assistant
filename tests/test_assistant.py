@@ -9,8 +9,9 @@ import json
 
 import pytest
 
-from assistant import config, demo, evidence, integrity, model, pipeline
+from assistant import checks, config, demo, evidence, integrity, model, pipeline, utils
 from assistant import proposal as proposals
+from assistant.models import CheckResult
 
 TEST_DOUBLE_FIX = {
     "find": "    return (2 * total_cents + quantity) // (2 * quantity)",
@@ -63,6 +64,23 @@ def baseline_text():
     return (config.REPO_DIR / "baseline.py").read_text()
 
 
+# Data models and helpers ------------------------------------------------------------------------
+
+
+def test_check_result_round_trips_through_saved_json(tmp_path):
+    result = checks.run_check(config.REPO_DIR / "baseline.py")
+    utils.write_json(tmp_path / "check.json", result)
+    loaded = CheckResult.from_dict(utils.read_json(tmp_path / "check.json"))
+    assert loaded == result
+    assert loaded.failing_ids == ["zero-quantity"]
+    assert loaded.pass_count == "4/5"
+
+
+def test_timeout_output_is_decoded_text():
+    assert checks._text(b"partial \xff") == "partial \ufffd"
+    assert checks._text(None) == ""
+
+
 # Evidence ---------------------------------------------------------------------------------------
 
 
@@ -70,7 +88,7 @@ def test_events_grouped_by_failure_signature():
     events, malformed = evidence.load_events()
     groups = {i.id: i.event_ids for i in evidence.group_incidents(events)}
     assert groups == {"INC-EV1": ["EV1", "EV2", "EV4"], "INC-EV3": ["EV3"]}
-    assert [m["event_id"] for m in malformed] == ["EV5"]
+    assert [m.event_id for m in malformed] == ["EV5"]
 
 
 def test_missing_and_invalid_event_files_are_reported(tmp_path):
@@ -78,7 +96,7 @@ def test_missing_and_invalid_event_files_are_reported(tmp_path):
     bad.write_text("{not json")
     events, problems = evidence.load_events([tmp_path / "absent.json", bad, config.REPO_DIR / "events.json"])
     assert len(events) == 3
-    assert [p["problem"].split(":")[0] for p in problems] == ["event file not found", "invalid JSON"]
+    assert [p.problem.split(":")[0] for p in problems] == ["event file not found", "invalid JSON"]
 
 
 # Proposal validation ------------------------------------------------------------------------------
@@ -98,7 +116,7 @@ def test_citing_unrelated_or_unknown_event_is_an_error(incident, baseline_text):
     findings = proposals.check_diagnosis(
         make_proposal(relevant_event_ids=["EV1", "EV3", "EV9"]), incident, ids, baseline_text
     )
-    codes = {f["code"]: f["level"] for f in findings}
+    codes = {f.code: f.level for f in findings}
     assert codes["unrelated_event_cited"] == "error"
     assert codes["unknown_event"] == "error"
     assert codes["evidence_not_cited"] == "warning"
@@ -111,7 +129,7 @@ def test_cited_line_must_exist(incident, baseline_text):
         {"EV1", "EV2", "EV4"},
         baseline_text,
     )
-    assert [f["code"] for f in findings] == ["line_out_of_range"]
+    assert [f.code for f in findings] == ["line_out_of_range"]
 
 
 @pytest.mark.parametrize(
@@ -132,7 +150,7 @@ def test_cited_line_must_exist(incident, baseline_text):
 def test_bad_patches_are_rejected_without_a_candidate(incident, baseline_text, patch, code):
     candidate, findings = proposals.apply_patch(make_proposal(patch=patch), incident, baseline_text)
     assert candidate is None
-    assert findings[0]["code"] == code
+    assert findings[0].code == code
 
 
 def test_interface_change_is_an_error(incident, baseline_text):
@@ -146,7 +164,7 @@ def test_interface_change_is_an_error(incident, baseline_text):
         ],
     }
     _, findings = proposals.apply_patch(make_proposal(patch=patch), incident, baseline_text)
-    assert [f["code"] for f in findings] == ["interface_changed"]
+    assert [f.code for f in findings] == ["interface_changed"]
 
 
 def test_valid_patch_applies_only_to_a_copy(incident, baseline_text):
@@ -266,7 +284,7 @@ def test_demo_grades_all_five_checks(tmp_path, monkeypatch):
     pipeline.execute("EV1", runs_dir=tmp_path / "runs")  # stands in for a saved live run
     scenarios = demo.run_scenarios("EV1", runs_dir=tmp_path / "runs")
     rows = demo.grade(scenarios)
-    assert [r["passed"] for r in rows] == [True] * 5, [r["observed"] for r in rows]
+    assert [r.passed for r in rows] == [True] * 5, [r.observed for r in rows]
     assert "5/5 checks passed" in demo.write_results(rows, scenarios, tmp_path / "RESULTS.md").read_text()
 
 

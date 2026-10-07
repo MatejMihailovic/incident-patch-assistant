@@ -16,6 +16,9 @@ This repository is a take-home exercise (Junior AI Engineer, task E "incidents")
 - Use `loguru`'s `logger` in `assistant/`, never `print`. Ruff's `T20` rule enforces this. Only the stdlib-only `scripts/` print.
 - Sphinx docstrings (`:param:`, `:type:`, `:returns:`, `:rtype:`, `:raises:`) on every function. pydoclint checks them.
 - Never run formatters or fixers on `fixtures/incidents/` or `runs/`.
+- A result shape built in more than one place gets a dataclass in `assistant/models.py`. It must keep the keys already used in saved `runs/` JSON.
+- Reused helpers (time, JSON I/O, paths) go in `assistant/utils.py`, not in copies inside each module.
+- Comments explain *why*, briefly. Don't restate what the code does.
 
 ## Commands
 

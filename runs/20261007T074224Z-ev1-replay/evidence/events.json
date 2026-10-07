@@ -1,0 +1,90 @@
+{
+  "events": [
+    {
+      "event_id": "EV1",
+      "function": "unit_price",
+      "input": {
+        "total_cents": 0,
+        "quantity": 0
+      },
+      "error": "ZeroDivisionError",
+      "source": "baseline.py:4",
+      "_origin": "fixtures/incidents/events.json"
+    },
+    {
+      "event_id": "EV2",
+      "function": "unit_price",
+      "input": {
+        "total_cents": 0,
+        "quantity": 0
+      },
+      "error": "ZeroDivisionError",
+      "source": "baseline.py:4",
+      "_origin": "fixtures/incidents/events.json"
+    },
+    {
+      "event_id": "EV3",
+      "function": "unit_price",
+      "input": {
+        "total_cents": -1,
+        "quantity": 1
+      },
+      "error": "ValueError",
+      "source": "baseline.py:3",
+      "note": "Expected rejection of an invalid input; unrelated to EV1.",
+      "_origin": "fixtures/incidents/events.json"
+    },
+    {
+      "event_id": "EV4",
+      "function": "unit_price",
+      "input": {
+        "total_cents": 1500,
+        "quantity": 0
+      },
+      "error": "ZeroDivisionError",
+      "message": "integer division or modulo by zero",
+      "traceback": [
+        "File \"baseline.py\", line 4, in unit_price",
+        "    return (2 * total_cents + quantity) // (2 * quantity)",
+        "ZeroDivisionError: integer division or modulo by zero"
+      ],
+      "source": "baseline.py:4",
+      "note": "Addition: same defect as EV1 with a nonzero total and a traceback-style payload.",
+      "_origin": "fixtures/additions/extra-events.json"
+    }
+  ],
+  "malformed": [
+    {
+      "file": "fixtures/additions/extra-events.json",
+      "problem": "missing or invalid 'error'; missing or invalid 'source'",
+      "event_id": "EV5",
+      "index": 1
+    }
+  ],
+  "incidents": [
+    {
+      "id": "INC-EV1",
+      "function": "unit_price",
+      "error": "ZeroDivisionError",
+      "source": "baseline.py:4",
+      "module": "baseline.py",
+      "line": 4,
+      "event_ids": [
+        "EV1",
+        "EV2",
+        "EV4"
+      ]
+    },
+    {
+      "id": "INC-EV3",
+      "function": "unit_price",
+      "error": "ValueError",
+      "source": "baseline.py:3",
+      "module": "baseline.py",
+      "line": 3,
+      "event_ids": [
+        "EV3"
+      ]
+    }
+  ]
+}

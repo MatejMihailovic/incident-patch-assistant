@@ -1,0 +1,12 @@
+2026-10-07 09:42:24.147 | INFO     | Run 20261007T074224Z-ev1-replay started for event EV1
+2026-10-07 09:42:24.148 | DEBUG    | Frozen fixtures intact (before)
+2026-10-07 09:42:24.148 | WARNING  | Malformed event EV5 in fixtures/additions/extra-events.json: missing or invalid 'error'; missing or invalid 'source'
+2026-10-07 09:42:24.150 | INFO     | Selected INC-EV1: ZeroDivisionError at baseline.py:4 (events ['EV1', 'EV2', 'EV4'])
+2026-10-07 09:42:24.170 | INFO     | Baseline: failing ['zero-quantity']; reproducing ZeroDivisionError: ['zero-quantity']
+2026-10-07 09:42:24.214 | INFO     | Using saved response /home/matej/provectus-ai-task/incident-patch-assistant/runs/20261006T161408Z-ev1-live/model/response.json instead of calling the API
+2026-10-07 09:42:24.214 | INFO     | Response source replay (input 3686 / output 1190 tokens)
+2026-10-07 09:42:24.215 | INFO     | Proposal cites ['EV1', 'EV2', 'EV4'] at baseline.py:4
+2026-10-07 09:42:24.216 | INFO     | Patch applied to a separate copy: /home/matej/provectus-ai-task/incident-patch-assistant/runs/20261007T074224Z-ev1-replay/candidate.py
+2026-10-07 09:42:24.262 | INFO     | Candidate: failing none
+2026-10-07 09:42:24.313 | DEBUG    | Frozen fixtures intact (after)
+2026-10-07 09:42:24.313 | SUCCESS  | Run CHECKED: All 5 reference cases pass on the candidate copy; previously failing: zero-quantity.
