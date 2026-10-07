@@ -201,10 +201,10 @@ These figures are approximate, taken from commit times and the working session (
 | Phase | Time |
 |---|---|
 | Reading the brief and starter pack, planning | ~0:20 |
-| Data preparation: copy and freeze, independent verification, additions, ambiguity notes | ~0:20 |
+| Data preparation: copy and freeze, independent verification, additions, ambiguity notes, and my review of the fixtures and expected values | ~0:45 |
 | Pipeline, validation, report, CLI, negative controls, tests | ~0:45 |
 | Docstrings, first live run, demo grading, target-selection fix, README | ~1:05 |
-| **Total so far** | **~2:30** |
+| **Total so far** | **~2:55** |
 
 Still to do: the short presentation.
 
