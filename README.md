@@ -196,7 +196,7 @@ The fixtures are documented in [fixtures/README.md](fixtures/README.md): the gen
 
 ## Time spent
 
-These figures are approximate, taken from commit times and the working session (2026-10-06).
+These figures are approximate, taken from commit times and the working sessions (2026-10-06 and 2026-10-07).
 
 | Phase | Time |
 |---|---|
@@ -204,7 +204,10 @@ These figures are approximate, taken from commit times and the working session (
 | Data preparation: copy and freeze, independent verification, additions, ambiguity notes, and my review of the fixtures and expected values | ~0:45 |
 | Pipeline, validation, report, CLI, negative controls, tests | ~0:45 |
 | Docstrings, first live run, demo grading, target-selection fix, README | ~1:05 |
-| **Total so far** | **~2:55** |
+| Logging, linting and pre-commit hooks; refactor into shared data models and utils | ~0:30 |
+| AI workflow documentation: manifest, README, workflow example, snapshots | ~0:15 |
+| Code review and presentation | ~0:20 |
+| **Total** | **~4:00** |
 
 Still to do: the short presentation.
 
